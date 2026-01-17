@@ -12,3 +12,6 @@ PRODUCT_BUNDLE_IDENTIFIER = com.cozysealsoftware.flutterLocalLlmExample
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 com.cozysealsoftware. All rights reserved.
+
+// Minimum macOS version required
+MACOSX_DEPLOYMENT_TARGET = 13.3

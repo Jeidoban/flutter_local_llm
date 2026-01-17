@@ -15,7 +15,7 @@ A new Flutter plugin project.
 
   s.source           = { :path => '.' }
   s.source_files = 'Classes/**/*'
-  s.vendored_frameworks = 'Frameworks/llama.xcframework'
+  s.vendored_frameworks = 'Frameworks/llama.framework'
 
   # If your plugin requires a privacy manifest, for example if it collects user
   # data, update the PrivacyInfo.xcprivacy file to describe your plugin's

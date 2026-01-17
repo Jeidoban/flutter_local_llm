@@ -2,21 +2,28 @@ PODS:
   - flutter_local_llm (0.0.1):
     - FlutterMacOS
   - FlutterMacOS (1.0.0)
+  - path_provider_foundation (0.0.1):
+    - Flutter
+    - FlutterMacOS
 
 DEPENDENCIES:
   - flutter_local_llm (from `Flutter/ephemeral/.symlinks/plugins/flutter_local_llm/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
+  - path_provider_foundation (from `Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin`)
 
 EXTERNAL SOURCES:
   flutter_local_llm:
     :path: Flutter/ephemeral/.symlinks/plugins/flutter_local_llm/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
+  path_provider_foundation:
+    :path: Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin
 
 SPEC CHECKSUMS:
-  flutter_local_llm: 7c1505a6b84c0859676d52a13f7a855de9e9cc32
+  flutter_local_llm: d5e64f44c48fdfa536c17a5a8df456195811617d
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
+  path_provider_foundation: bb55f6dbba17d0dccd6737fe6f7f34fbd0376880
 
-PODFILE CHECKSUM: 54d867c82ac51cbd61b565781b9fada492027009
+PODFILE CHECKSUM: c4dda72bffbbf606876d102a78d4d3a0e4c9b017
 
 COCOAPODS: 1.16.2
