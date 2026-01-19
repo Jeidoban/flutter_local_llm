@@ -11,6 +11,7 @@ class FlutterLocalLlm {
   final LLMIsolate _isolate;
   final ChatFormat _chatFormat;
   int _nextRequestId = 0;
+  bool _needsFullContextReset = true;
 
   /// Public access to chat history
   /// Users can read, modify, or replace this to control conversation context
@@ -45,6 +46,10 @@ class FlutterLocalLlm {
   ///   model: LLMModel.gemma3nE2B,
   ///   systemPrompt: 'You are a helpful assistant.',
   ///   onDownloadProgress: (progress) => print('${(progress * 100).toStringAsFixed(1)}%'),
+  ///   contextSize: 16384,
+  ///   nPredict: -1,
+  ///   nBatch: 2048,
+  ///   nThreads: 8,
   ///   temperature: 0.7,
   ///   topK: 64,
   ///   topP: 0.95,
@@ -58,14 +63,15 @@ class FlutterLocalLlm {
     String? systemPrompt,
     String? customUrl,
     void Function(double progress)? onDownloadProgress,
-    int? contextSize,
-    int? nPredict,
-    int? nBatch,
-    double? temperature = 0.7,
-    int? topK = 64,
-    double? topP = 0.95,
-    double? minP = 0.05,
-    double? penaltyRepeat = 1.1,
+    int contextSize = 16384,
+    int nPredict = -1,
+    int nBatch = 2048,
+    int nThreads = 8,
+    double temperature = 0.7,
+    int topK = 64,
+    double topP = 0.95,
+    double minP = 0.05,
+    double penaltyRepeat = 1.1,
     int keepRecentPairs = 2,
   }) async {
     if (kDebugMode) {
@@ -80,6 +86,7 @@ class FlutterLocalLlm {
       contextSize: contextSize,
       nPredict: nPredict,
       nBatch: nBatch,
+      nThreads: nThreads,
       temperature: temperature,
       topK: topK,
       topP: topP,
@@ -144,6 +151,28 @@ class FlutterLocalLlm {
     }
   }
 
+  /// Get remaining context space from the LLM
+  Future<int> _getRemainingContextSpace() async {
+    final requestId = _nextRequestId++;
+
+    // Send command to isolate
+    _isolate.sendCommand(
+      GetRemainingContextCommand(requestId: requestId),
+    );
+
+    // Wait for response
+    await for (final response in _isolate.responseStream) {
+      if (response is RemainingContextResponse &&
+          response.requestId == requestId) {
+        return response.remaining;
+      } else if (response is ErrorResponse && response.requestId == requestId) {
+        throw Exception(response.error);
+      }
+    }
+
+    throw Exception('Failed to get remaining context space');
+  }
+
   /// Clear chat history and start fresh conversation
   /// Keeps the same system prompt from init()
   /// Also clears the LLM context in the isolate
@@ -169,6 +198,9 @@ class FlutterLocalLlm {
 
     // Clear the LLM context in the isolate
     _isolate.sendCommand(ClearContextCommand());
+
+    // Mark that we need to send full context on next message
+    _needsFullContextReset = true;
   }
 
   /// Send a message and get streaming tokens
@@ -234,6 +266,9 @@ class FlutterLocalLlm {
       );
     }
 
+    // Track how many messages we had before adding new ones
+    final previousMessageCount = chatHistory.messages.length;
+
     // Add all messages from provided history to internal history
     for (final msg in messages.messages) {
       chatHistory.addMessage(role: msg.role, content: msg.content);
@@ -242,11 +277,81 @@ class FlutterLocalLlm {
     // Add empty assistant message to history
     chatHistory.addMessage(role: Role.assistant, content: '');
 
-    // Generate prompt from chat history
-    final prompt = chatHistory.exportFormat(
-      _chatFormat,
-      leaveLastAssistantOpen: true,
-    );
+    // Check if we need to trim before generating
+    // Get the messages we're about to send as a string to estimate token count
+    final messagesToSend = StringBuffer();
+    for (int i = previousMessageCount; i < chatHistory.messages.length; i++) {
+      messagesToSend.write(chatHistory.messages[i].content);
+    }
+
+    // Check remaining context space
+    final remaining = await _getRemainingContextSpace();
+
+    // Rough estimate: 1 token ~= 4 characters, reserve extra space for response
+    final estimatedTokensNeeded = (messagesToSend.length / 4).ceil() + 500;
+
+    if (kDebugMode) {
+      print('[FlutterLocalLlm] Remaining context: $remaining, estimated needed: $estimatedTokensNeeded');
+    }
+
+    // If we're running low on space, trim the history
+    if (remaining < estimatedTokensNeeded) {
+      if (kDebugMode) {
+        print('[FlutterLocalLlm] Low context space! Auto-trimming history...');
+      }
+
+      // Remove the assistant message we just added temporarily
+      chatHistory.messages.removeLast();
+
+      // Trim the history
+      _trimHistory();
+
+      // Clear llama context
+      _isolate.sendCommand(ClearContextCommand());
+
+      // Re-add the assistant message
+      chatHistory.addMessage(role: Role.assistant, content: '');
+
+      // Mark that we need to send full context after trimming
+      _needsFullContextReset = true;
+    }
+
+    // Generate prompt - either full context or just new messages
+    final String prompt;
+    if (_needsFullContextReset) {
+      // First message, after clear, or after trimming - send full context
+      if (kDebugMode) {
+        print(
+          '[FlutterLocalLlm] Sending full context (${chatHistory.messages.length} messages)',
+        );
+      }
+      prompt = chatHistory.exportFormat(
+        _chatFormat,
+        leaveLastAssistantOpen: true,
+      );
+      _needsFullContextReset = false;
+    } else {
+      // Subsequent messages - only send new content
+      if (kDebugMode) {
+        print(
+          '[FlutterLocalLlm] Sending incremental update (${chatHistory.messages.length - previousMessageCount} new messages)',
+        );
+      }
+
+      // Create a temporary history with just the new messages
+      final incrementalHistory = ChatHistory();
+      for (int i = previousMessageCount; i < chatHistory.messages.length; i++) {
+        incrementalHistory.addMessage(
+          role: chatHistory.messages[i].role,
+          content: chatHistory.messages[i].content,
+        );
+      }
+
+      prompt = incrementalHistory.exportFormat(
+        _chatFormat,
+        leaveLastAssistantOpen: true,
+      );
+    }
 
     // Stream response
     final responseBuffer = StringBuffer();
@@ -269,6 +374,56 @@ class FlutterLocalLlm {
       print(
         '[FlutterLocalLlm] ChatHistory response completed, response length: ${fullResponse.length}',
       );
+    }
+  }
+
+  /// Trim chat history to keep only recent conversation
+  void _trimHistory() {
+    // Extract system prompt if present
+    String? systemPrompt;
+    if (chatHistory.messages.isNotEmpty &&
+        chatHistory.messages.first.role == Role.system) {
+      systemPrompt = chatHistory.messages.first.content;
+    }
+
+    // Get the keepRecentPairs value from config (default 2)
+    final keepPairs = 2; // We can expose this later if needed
+
+    // Keep only the most recent pairs (user + assistant)
+    final recentMessages = <Message>[];
+    int pairCount = 0;
+
+    // Iterate backwards, collecting recent pairs
+    for (int i = chatHistory.messages.length - 1; i >= 0; i--) {
+      final msg = chatHistory.messages[i];
+
+      // Skip system messages in the count
+      if (msg.role == Role.system) continue;
+
+      recentMessages.insert(0, msg);
+
+      // Count complete pairs (assistant messages indicate end of pair)
+      if (msg.role == Role.assistant && msg.content.isNotEmpty) {
+        pairCount++;
+        if (pairCount >= keepPairs) break;
+      }
+    }
+
+    // Rebuild chat history
+    chatHistory = ChatHistory();
+
+    // Re-add system prompt
+    if (systemPrompt != null && systemPrompt.isNotEmpty) {
+      chatHistory.addMessage(role: Role.system, content: systemPrompt);
+    }
+
+    // Add recent messages
+    for (final msg in recentMessages) {
+      chatHistory.addMessage(role: msg.role, content: msg.content);
+    }
+
+    if (kDebugMode) {
+      print('[FlutterLocalLlm] Trimmed to ${chatHistory.messages.length} messages');
     }
   }
 

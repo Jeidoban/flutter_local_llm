@@ -38,14 +38,15 @@ class LLMConfig {
   final LLMModel model;
   final String? customUrl;
   final String? systemPrompt;
-  final int? contextSize;
-  final int? nPredict;
-  final int? nBatch;
-  final double? temperature;
-  final int? topK;
-  final double? topP;
-  final double? minP;
-  final double? penaltyRepeat;
+  final int contextSize;
+  final int nPredict;
+  final int nBatch;
+  final int nThreads;
+  final double temperature;
+  final int topK;
+  final double topP;
+  final double minP;
+  final double penaltyRepeat;
   final int keepRecentPairs;
   final ChatFormat chatFormat;
 
@@ -53,9 +54,10 @@ class LLMConfig {
     this.model = LLMModel.gemma3nE2B,
     this.customUrl,
     this.systemPrompt,
-    this.contextSize,
-    this.nPredict,
-    this.nBatch,
+    this.contextSize = 16384,
+    this.nPredict = -1,
+    this.nBatch = 2048,
+    this.nThreads = 8,
     this.temperature = 0.7,
     this.topK = 64,
     this.topP = 0.95,

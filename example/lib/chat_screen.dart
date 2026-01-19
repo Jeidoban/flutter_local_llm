@@ -45,7 +45,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       print('DEBUG: Starting model initialization...');
       _llm = await FlutterLocalLlm.init(
-        contextSize: 32000,
+        contextSize: 16000,
         model: LLMModel.gemma3nE2B,
         systemPrompt:
             'You are a helpful, concise assistant. Keep your answers informative but brief.',

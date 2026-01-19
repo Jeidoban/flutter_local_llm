@@ -27,6 +27,12 @@ class GenerateFromPromptCommand extends IsolateCommand {
 
 class ClearContextCommand extends IsolateCommand {}
 
+class GetRemainingContextCommand extends IsolateCommand {
+  final int requestId;
+
+  GetRemainingContextCommand({required this.requestId});
+}
+
 class DisposeCommand extends IsolateCommand {}
 
 // ============================================================================
@@ -55,6 +61,13 @@ class ErrorResponse extends IsolateResponse {
   final int? requestId;
 
   ErrorResponse({required this.error, this.requestId});
+}
+
+class RemainingContextResponse extends IsolateResponse {
+  final int remaining;
+  final int requestId;
+
+  RemainingContextResponse({required this.remaining, required this.requestId});
 }
 
 // ============================================================================
@@ -161,34 +174,19 @@ void _isolateEntryPoint(SendPort mainSendPort) {
         setupLlamaLibraryPath();
 
         // Create context params
-        final contextParams = ContextParams();
-        if (message.config.nPredict != null) {
-          contextParams.nPredict = message.config.nPredict!;
-        }
-        if (message.config.contextSize != null) {
-          contextParams.nCtx = message.config.contextSize!;
-        }
-        if (message.config.nBatch != null) {
-          contextParams.nBatch = message.config.nBatch!;
-        }
+        final contextParams = ContextParams()
+          ..nPredict = message.config.nPredict
+          ..nCtx = message.config.contextSize
+          ..nBatch = message.config.nBatch
+          ..nThreads = message.config.nThreads;
 
         // Create sampler params
-        final samplerParams = SamplerParams();
-        if (message.config.temperature != null) {
-          samplerParams.temp = message.config.temperature!;
-        }
-        if (message.config.topK != null) {
-          samplerParams.topK = message.config.topK!;
-        }
-        if (message.config.topP != null) {
-          samplerParams.topP = message.config.topP!;
-        }
-        if (message.config.minP != null) {
-          samplerParams.minP = message.config.minP!;
-        }
-        if (message.config.penaltyRepeat != null) {
-          samplerParams.penaltyRepeat = message.config.penaltyRepeat!;
-        }
+        final samplerParams = SamplerParams()
+          ..temp = message.config.temperature
+          ..topK = message.config.topK
+          ..topP = message.config.topP
+          ..minP = message.config.minP
+          ..penaltyRepeat = message.config.penaltyRepeat;
 
         // Create Llama instance
         llama = Llama(
@@ -223,6 +221,27 @@ void _isolateEntryPoint(SendPort mainSendPort) {
           chatFormat!,
           message.requestId,
           mainSendPort,
+        );
+      } else if (message is GetRemainingContextCommand) {
+        if (llama == null) {
+          mainSendPort.send(
+            ErrorResponse(
+              error: 'Llama not initialized',
+              requestId: message.requestId,
+            ),
+          );
+          return;
+        }
+
+        final remaining = llama!.getRemainingContextSpace();
+        if (kDebugMode) {
+          print('[Isolate] Remaining context space: $remaining');
+        }
+        mainSendPort.send(
+          RemainingContextResponse(
+            remaining: remaining,
+            requestId: message.requestId,
+          ),
         );
       } else if (message is ClearContextCommand) {
         if (llama != null) {
