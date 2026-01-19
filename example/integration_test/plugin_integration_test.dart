@@ -6,7 +6,6 @@
 // For more information about Flutter integration tests, please see
 // https://flutter.dev/to/integration-testing
 
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -15,11 +14,13 @@ import 'package:flutter_local_llm/flutter_local_llm.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('getPlatformVersion test', (WidgetTester tester) async {
-    final FlutterLocalLlm plugin = FlutterLocalLlm();
-    final String? version = await plugin.getPlatformVersion();
-    // The version string depends on the host platform running the test, so
-    // just assert that some non-empty string is returned.
-    expect(version?.isNotEmpty, true);
+  testWidgets('FlutterLocalLlm API is available', (WidgetTester tester) async {
+    // Verify that the API types are accessible
+    expect(LLMModel.gemma3nE2B, isNotNull);
+    expect(Role.user, isNotNull);
+
+    // Note: We don't actually initialize the model here as it would be slow
+    // and require downloading a large file. This test just verifies the API
+    // is available and properly exported.
   });
 }

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 
 import 'package:flutter_local_llm/flutter_local_llm.dart';
-import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -16,27 +15,21 @@ class ChatMessage {
   final bool isUser;
   final DateTime timestamp;
 
-  ChatMessage({
-    required this.text,
-    required this.isUser,
-    DateTime? timestamp,
-  }) : timestamp = timestamp ?? DateTime.now();
+  ChatMessage({required this.text, required this.isUser, DateTime? timestamp})
+    : timestamp = timestamp ?? DateTime.now();
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  final _flutterLocalLlm = FlutterLocalLlm();
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
 
-  LlamaParent? _llamaParent;
-  ChatHistory? _chatHistory;
+  FlutterLocalLlm? _llm;
   bool _isLoading = true;
   bool _isProcessing = false;
   String _loadingStatus = 'Initializing...';
   double _downloadProgress = 0.0;
   String _currentResponse = '';
-  Completer<void>? _completionDone;
 
   @override
   void initState() {
@@ -50,61 +43,24 @@ class _ChatScreenState extends State<ChatScreen> {
         _loadingStatus = 'Loading model...';
       });
 
-      print('DEBUG: Starting model load...');
-      _llamaParent = await _flutterLocalLlm.loadModel(
+      print('DEBUG: Starting model initialization...');
+      _llm = await FlutterLocalLlm.init(
+        contextSize: 32000,
         model: LLMModel.gemma3nE2B,
+        systemPrompt:
+            'You are a helpful, concise assistant. Keep your answers informative but brief.',
         onDownloadProgress: (progress) {
           setState(() {
             _downloadProgress = progress;
-            _loadingStatus = 'Downloading model: ${(progress * 100).toStringAsFixed(1)}%';
+            _loadingStatus =
+                'Downloading model: ${(progress * 100).toStringAsFixed(1)}%';
           });
-          print('DEBUG: Download progress: ${(progress * 100).toStringAsFixed(1)}%');
+          print(
+            'DEBUG: Download progress: ${(progress * 100).toStringAsFixed(1)}%',
+          );
         },
       );
-      print('DEBUG: Model load returned, llamaParent is: ${_llamaParent != null ? "NOT NULL" : "NULL"}');
-
-      // Initialize chat history with system prompt
-      _chatHistory = ChatHistory();
-      _chatHistory!.addMessage(
-        role: Role.system,
-        content: 'You are a helpful, concise assistant. Keep your answers informative but brief.',
-      );
-
-      // Listen to token stream
-      _llamaParent!.stream.listen((token) {
-        setState(() {
-          _currentResponse += token;
-          // Update the last message if it's from assistant
-          if (_messages.isNotEmpty && !_messages.last.isUser) {
-            _messages[_messages.length - 1] = ChatMessage(
-              text: _currentResponse,
-              isUser: false,
-            );
-          }
-        });
-        _scrollToBottom();
-      });
-
-      // Listen for completion events
-      _llamaParent!.completions.listen((event) {
-        if (event.success) {
-          // Update chat history with complete response
-          if (_chatHistory!.messages.isNotEmpty &&
-              _chatHistory!.messages.last.role == Role.assistant) {
-            _chatHistory!.messages.last = Message(
-              role: Role.assistant,
-              content: _currentResponse,
-            );
-          }
-          _currentResponse = '';
-          if (_completionDone != null && !_completionDone!.isCompleted) {
-            _completionDone!.complete();
-          }
-          setState(() {
-            _isProcessing = false;
-          });
-        }
-      });
+      print('DEBUG: Model initialization complete');
 
       setState(() {
         _isLoading = false;
@@ -112,7 +68,10 @@ class _ChatScreenState extends State<ChatScreen> {
       });
 
       // Add welcome message
-      _addMessage('Hello! I\'m ready to chat. How can I help you today?', isUser: false);
+      _addMessage(
+        'Hello! I\'m ready to chat. How can I help you today?',
+        isUser: false,
+      );
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -141,7 +100,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendMessage() async {
-    if (_messageController.text.trim().isEmpty || _isProcessing || _llamaParent == null) {
+    if (_messageController.text.trim().isEmpty ||
+        _isProcessing ||
+        _llm == null) {
       return;
     }
 
@@ -151,10 +112,6 @@ class _ChatScreenState extends State<ChatScreen> {
     // Add user message to UI
     _addMessage(userMessage, isUser: true);
 
-    // Add to chat history
-    _chatHistory!.addMessage(role: Role.user, content: userMessage);
-    _chatHistory!.addMessage(role: Role.assistant, content: '');
-
     setState(() {
       _isProcessing = true;
       _currentResponse = '';
@@ -163,30 +120,40 @@ class _ChatScreenState extends State<ChatScreen> {
     // Add empty assistant message that will be updated with streaming response
     _addMessage('', isUser: false);
 
-    // Create completer for this message
-    _completionDone = Completer<void>();
-
-    // Generate prompt and send to model
-    String prompt = _chatHistory!.exportFormat(
-      ChatFormat.gemma,
-      leaveLastAssistantOpen: true,
-    );
-
-    await _llamaParent!.sendPrompt(prompt);
-
-    // Wait for completion
     try {
-      await _completionDone!.future.timeout(
-        const Duration(seconds: 120),
-        onTimeout: () {
-          setState(() {
-            _isProcessing = false;
-          });
-        },
-      );
-    } catch (e) {
+      // Send message and stream tokens
+      final stream = _llm!.sendMessage(userMessage, role: Role.user);
+
+      await for (final token in stream) {
+        setState(() {
+          _currentResponse += token;
+          // Update the last message (assistant's response)
+          if (_messages.isNotEmpty && !_messages.last.isUser) {
+            _messages[_messages.length - 1] = ChatMessage(
+              text: _currentResponse.trim(),
+              isUser: false,
+            );
+          }
+        });
+        _scrollToBottom();
+      }
+
+      // Stream completed
+      _currentResponse = '';
       setState(() {
         _isProcessing = false;
+      });
+    } catch (e) {
+      // Handle error
+      setState(() {
+        if (_messages.isNotEmpty && !_messages.last.isUser) {
+          _messages[_messages.length - 1] = ChatMessage(
+            text: 'Error: $e',
+            isUser: false,
+          );
+        }
+        _isProcessing = false;
+        _currentResponse = '';
       });
     }
   }
@@ -195,17 +162,14 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
-    _llamaParent?.dispose();
+    _llm?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Flutter Local LLM Chat'),
-        elevation: 2,
-      ),
+      appBar: AppBar(title: const Text('Flutter Local LLM Chat'), elevation: 2),
       body: _isLoading
           ? Center(
               child: Column(
@@ -226,9 +190,7 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 Expanded(
                   child: _messages.isEmpty
-                      ? const Center(
-                          child: Text('No messages yet'),
-                        )
+                      ? const Center(child: Text('No messages yet'))
                       : ListView.builder(
                           controller: _scrollController,
                           padding: const EdgeInsets.all(8),
@@ -271,7 +233,10 @@ class _ChatScreenState extends State<ChatScreen> {
               decoration: const InputDecoration(
                 hintText: 'Type a message...',
                 border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
               ),
               maxLines: null,
               textInputAction: TextInputAction.send,

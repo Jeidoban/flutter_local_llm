@@ -1,29 +1,36 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_local_llm/flutter_local_llm.dart';
-import 'package:flutter_local_llm/flutter_local_llm_platform_interface.dart';
-import 'package:flutter_local_llm/flutter_local_llm_method_channel.dart';
-import 'package:plugin_platform_interface/plugin_platform_interface.dart';
-
-class MockFlutterLocalLlmPlatform
-    with MockPlatformInterfaceMixin
-    implements FlutterLocalLlmPlatform {
-
-  @override
-  Future<String?> getPlatformVersion() => Future.value('42');
-}
 
 void main() {
-  final FlutterLocalLlmPlatform initialPlatform = FlutterLocalLlmPlatform.instance;
-
-  test('$MethodChannelFlutterLocalLlm is the default instance', () {
-    expect(initialPlatform, isInstanceOf<MethodChannelFlutterLocalLlm>());
+  test('FlutterLocalLlm exports are available', () {
+    // Verify that the public types are exported correctly
+    expect(LLMModel.values, isNotEmpty);
+    expect(Role.values, isNotEmpty);
+    expect(ChatFormat.values, isNotEmpty);
   });
 
-  test('getPlatformVersion', () async {
-    FlutterLocalLlm flutterLocalLlmPlugin = FlutterLocalLlm();
-    MockFlutterLocalLlmPlatform fakePlatform = MockFlutterLocalLlmPlatform();
-    FlutterLocalLlmPlatform.instance = fakePlatform;
+  test('LLMModel has correct properties', () {
+    final model = LLMModel.gemma3nE2B;
+    expect(model.name, isNotEmpty);
+    expect(model.url, isNotEmpty);
+    expect(model.fileName, isNotEmpty);
+    expect(model.chatFormat, ChatFormat.gemma);
+  });
 
-    expect(await flutterLocalLlmPlugin.getPlatformVersion(), '42');
+  test('Role enum is available', () {
+    expect(Role.user, isNotNull);
+    expect(Role.assistant, isNotNull);
+    expect(Role.system, isNotNull);
+  });
+
+  test('LLMConfig has sensible defaults', () {
+    final config = LLMConfig();
+    expect(config.model, LLMModel.gemma3nE2B);
+    expect(config.contextSize, 8192);
+    expect(config.temperature, 0.7);
+    expect(config.topK, 64);
+    expect(config.topP, 0.95);
+    expect(config.penaltyRepeat, 1.1);
+    expect(config.keepRecentPairs, 2);
   });
 }
