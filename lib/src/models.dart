@@ -1,9 +1,7 @@
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
 /// Supported models for FlutterLocalLLM
-enum LLMModel {
-  gemma3nE2B,
-}
+enum LLMModel { gemma3nE2B }
 
 /// Extension to get model details
 extension LLMModelExtension on LLMModel {
@@ -47,7 +45,6 @@ class LLMConfig {
   final double topP;
   final double minP;
   final double penaltyRepeat;
-  final int keepRecentPairs;
   final ChatFormat chatFormat;
 
   LLMConfig({
@@ -63,7 +60,6 @@ class LLMConfig {
     this.topP = 0.95,
     this.minP = 0.05,
     this.penaltyRepeat = 1.1,
-    this.keepRecentPairs = 2,
     ChatFormat? chatFormat,
   }) : chatFormat = chatFormat ?? model.chatFormat;
 

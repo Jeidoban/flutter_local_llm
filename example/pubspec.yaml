@@ -29,6 +29,7 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   llama_cpp_dart: ^0.2.2
+  flutter_ai_toolkit: ^1.0.0
 
 dev_dependencies:
   integration_test:

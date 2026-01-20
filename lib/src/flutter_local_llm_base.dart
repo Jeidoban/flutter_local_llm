@@ -72,7 +72,6 @@ class FlutterLocalLlm {
     double topP = 0.95,
     double minP = 0.05,
     double penaltyRepeat = 1.1,
-    int keepRecentPairs = 2,
   }) async {
     if (kDebugMode) {
       print('[FlutterLocalLlm.init] Starting initialization...');
@@ -92,7 +91,6 @@ class FlutterLocalLlm {
       topP: topP,
       minP: minP,
       penaltyRepeat: penaltyRepeat,
-      keepRecentPairs: keepRecentPairs,
     );
 
     if (kDebugMode) {
@@ -156,9 +154,7 @@ class FlutterLocalLlm {
     final requestId = _nextRequestId++;
 
     // Send command to isolate
-    _isolate.sendCommand(
-      GetRemainingContextCommand(requestId: requestId),
-    );
+    _isolate.sendCommand(GetRemainingContextCommand(requestId: requestId));
 
     // Wait for response
     await for (final response in _isolate.responseStream) {
@@ -291,7 +287,9 @@ class FlutterLocalLlm {
     final estimatedTokensNeeded = (messagesToSend.length / 4).ceil() + 500;
 
     if (kDebugMode) {
-      print('[FlutterLocalLlm] Remaining context: $remaining, estimated needed: $estimatedTokensNeeded');
+      print(
+        '[FlutterLocalLlm] Remaining context: $remaining, estimated needed: $estimatedTokensNeeded',
+      );
     }
 
     // If we're running low on space, trim the history
@@ -423,7 +421,9 @@ class FlutterLocalLlm {
     }
 
     if (kDebugMode) {
-      print('[FlutterLocalLlm] Trimmed to ${chatHistory.messages.length} messages');
+      print(
+        '[FlutterLocalLlm] Trimmed to ${chatHistory.messages.length} messages',
+      );
     }
   }
 

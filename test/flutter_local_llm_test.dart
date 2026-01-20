@@ -31,6 +31,5 @@ void main() {
     expect(config.topK, 64);
     expect(config.topP, 0.95);
     expect(config.penaltyRepeat, 1.1);
-    expect(config.keepRecentPairs, 2);
   });
 }
