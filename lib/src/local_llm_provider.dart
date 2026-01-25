@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_ai_toolkit/flutter_ai_toolkit.dart';
+import 'package:flutter_local_llm/src/llm_chat_history.dart';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 import 'flutter_local_llm_base.dart';
 
@@ -86,7 +87,7 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
       _llm.clearHistory();
 
       // Create temp history with just this prompt
-      final tempHistory = ChatHistory();
+      final tempHistory = LlmChatHistory();
       final fullPrompt = prompt + _attachmentsToText(attachments);
       tempHistory.addMessage(role: Role.user, content: fullPrompt);
 
@@ -189,7 +190,9 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     _checkDisposed();
 
     if (kDebugMode) {
-      print('[LocalLlmProvider] Setting history with ${messages.length} messages');
+      print(
+        '[LocalLlmProvider] Setting history with ${messages.length} messages',
+      );
     }
 
     // Clear and update internal history
@@ -278,10 +281,7 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     // Add all chat messages
     for (final chatMsg in _chatHistory) {
       final message = _chatToMessage(chatMsg);
-      _llm.chatHistory.addMessage(
-        role: message.role,
-        content: message.content,
-      );
+      _llm.chatHistory.addMessage(role: message.role, content: message.content);
     }
   }
 

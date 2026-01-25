@@ -39,7 +39,7 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
       final llm = await FlutterLocalLlm.init(
         model: LLMModel.gemma3nE2B,
         systemPrompt: 'You are a helpful, concise assistant.',
-        contextSize: 16000,
+        contextSize: 256,
         onDownloadProgress: (progress) {
           setState(() {
             _downloadProgress = progress;
@@ -114,25 +114,25 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
               ),
             )
           : _provider == null
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.error_outline, size: 48),
-                      const SizedBox(height: 16),
-                      Text(_loadingStatus),
-                      const SizedBox(height: 16),
-                      ElevatedButton(
-                        onPressed: () {
-                          setState(() => _isLoading = true);
-                          _initializeProvider();
-                        },
-                        child: const Text('Retry'),
-                      ),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error_outline, size: 48),
+                  const SizedBox(height: 16),
+                  Text(_loadingStatus),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () {
+                      setState(() => _isLoading = true);
+                      _initializeProvider();
+                    },
+                    child: const Text('Retry'),
                   ),
-                )
-              : LlmChatView(provider: _provider!),
+                ],
+              ),
+            )
+          : LlmChatView(provider: _provider!),
     );
   }
 }

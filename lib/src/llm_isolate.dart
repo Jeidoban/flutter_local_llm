@@ -96,6 +96,7 @@ Future<String> _generateFromPrompt(
   ChatFormat chatFormat,
   int requestId,
   SendPort mainSendPort,
+  int nCtx,
 ) async {
   if (kDebugMode) {
     print('[Isolate] Generating from prompt (ID: $requestId)');
@@ -110,7 +111,12 @@ Future<String> _generateFromPrompt(
 
   // Stream tokens and check for stop tokens
   final responseBuffer = StringBuffer();
-  await for (final token in llama.generateText()) {
+  bool isDone = false;
+  late String token;
+
+  while (!isDone) {
+    (token, isDone) = llama.getNext();
+
     // Check if this token is a stop token
     bool shouldStop = false;
     for (final stopToken in stopTokens) {
@@ -162,6 +168,7 @@ void _isolateEntryPoint(SendPort mainSendPort) {
 
   Llama? llama;
   ChatFormat? chatFormat;
+  int? nCtx;
 
   receivePort.listen((message) async {
     try {
@@ -179,7 +186,6 @@ void _isolateEntryPoint(SendPort mainSendPort) {
           ..nCtx = message.config.contextSize
           ..nBatch = message.config.nBatch
           ..nThreads = message.config.nThreads;
-
         // Create sampler params
         final samplerParams = SamplerParams()
           ..temp = message.config.temperature
@@ -195,8 +201,9 @@ void _isolateEntryPoint(SendPort mainSendPort) {
           samplerParams: samplerParams,
         );
 
-        // Store chat format for later use
+        // Store chat format and context size for later use
         chatFormat = message.config.chatFormat;
+        nCtx = message.config.contextSize;
 
         if (kDebugMode) {
           print('[Isolate] Initialization complete');
@@ -204,7 +211,7 @@ void _isolateEntryPoint(SendPort mainSendPort) {
 
         mainSendPort.send(InitializedResponse());
       } else if (message is GenerateFromPromptCommand) {
-        if (llama == null || chatFormat == null) {
+        if (llama == null || chatFormat == null || nCtx == null) {
           mainSendPort.send(
             ErrorResponse(
               error: 'Llama not initialized',
@@ -221,6 +228,7 @@ void _isolateEntryPoint(SendPort mainSendPort) {
           chatFormat!,
           message.requestId,
           mainSendPort,
+          nCtx!,
         );
       } else if (message is GetRemainingContextCommand) {
         if (llama == null) {
