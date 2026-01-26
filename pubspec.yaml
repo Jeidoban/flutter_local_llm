@@ -1,5 +1,5 @@
 name: flutter_local_llm
-description: "A new Flutter plugin project."
+description: "A Flutter plugin for running local large language models (LLMs) using llama.cpp."
 version: 0.0.1
 homepage:
 

@@ -1,40 +1,50 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
+import 'dart:io';
 import 'package:flutter_local_llm/src/llm_chat_history.dart';
+import 'package:http/http.dart' as http;
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 import 'models.dart';
-import 'downloader.dart';
 import 'llm_isolate.dart';
 
-/// Main class for FlutterLocalLLM
-/// Provides a batteries-included API for running local LLMs on device
+/// Main class for running local LLMs on device with automatic model downloading
+/// and context management.
+///
+/// ```dart
+/// final llm = await FlutterLocalLlm.init(
+///   model: LLMModel.gemma3nE2B,
+///   systemPrompt: 'You are a helpful assistant.',
+/// );
+///
+/// await for (final token in llm.sendMessage('Hello!')) {
+///   print(token);
+/// }
+///
+/// llm.dispose();
+/// ```
 class FlutterLocalLlm {
   final LLMIsolate _isolate;
-  final ChatFormat _chatFormat;
+  final LLMConfig _config;
   int _nextRequestId = 0;
 
   /// Public access to chat history
   /// Users can read, modify, or replace this to control conversation context
   late LlmChatHistory chatHistory;
 
-  // Track system prompt separately
-  final String? _systemPrompt;
+  /// Get the current LLM configuration
+  LLMConfig get config => _config;
 
   // Private constructor
-  FlutterLocalLlm._({
-    required LLMIsolate isolate,
-    required ChatFormat chatFormat,
-    required int contextSize,
-    String? systemPrompt,
-  }) : _isolate = isolate,
-       _chatFormat = chatFormat,
-       _systemPrompt = systemPrompt {
+  FlutterLocalLlm._({required LLMIsolate isolate, required LLMConfig config})
+    : _isolate = isolate,
+      _config = config {
     // Initialize chat history
     chatHistory = LlmChatHistory();
 
     // Add system prompt if provided
-    if (systemPrompt != null && systemPrompt.isNotEmpty) {
-      chatHistory.addMessage(role: Role.system, content: systemPrompt);
+    if (config.systemPrompt != null && config.systemPrompt!.isNotEmpty) {
+      chatHistory.addMessage(role: Role.system, content: config.systemPrompt!);
     }
   }
 
@@ -54,10 +64,6 @@ class FlutterLocalLlm {
     double minP = 0.05,
     double penaltyRepeat = 1.1,
   }) async {
-    if (kDebugMode) {
-      print('[FlutterLocalLlm.init] Starting initialization...');
-    }
-
     // Create config
     final config = LLMConfig(
       model: model,
@@ -74,36 +80,75 @@ class FlutterLocalLlm {
       penaltyRepeat: penaltyRepeat,
     );
 
-    if (kDebugMode) {
-      print('[FlutterLocalLlm.init] Model: ${config.model.name}');
-      print('[FlutterLocalLlm.init] Download URL: ${config.downloadUrl}');
-    }
-
     // Download model if needed
-    final modelPath = await getModelPath(
+    final modelPath = await _getModelPath(
       config.downloadUrl,
       config.fileName,
       onDownloadProgress,
     );
 
-    if (kDebugMode) {
-      print('[FlutterLocalLlm.init] Model path: $modelPath');
-      print('[FlutterLocalLlm.init] Spawning isolate...');
-    }
-
     // Spawn isolate and initialize
     final isolate = await LLMIsolate.spawn(modelPath, config);
 
-    if (kDebugMode) {
-      print('[FlutterLocalLlm.init] Initialization complete!');
+    return FlutterLocalLlm._(isolate: isolate, config: config);
+  }
+
+  /// Get the models directory, creating it if it doesn't exist
+  static Future<Directory> _getModelsDirectory() async {
+    final documentsDir = await getApplicationDocumentsDirectory();
+    final modelsDir = Directory(
+      path.join(documentsDir.path, 'flutter_local_llm_models'),
+    );
+
+    if (!modelsDir.existsSync()) {
+      modelsDir.createSync(recursive: true);
     }
 
-    return FlutterLocalLlm._(
-      isolate: isolate,
-      chatFormat: config.chatFormat,
-      contextSize: config.contextSize,
-      systemPrompt: systemPrompt,
+    return modelsDir;
+  }
+
+  /// Download a model file from a URL
+  static Future<void> _downloadModel(
+    String url,
+    String destinationPath,
+    void Function(double progress)? onProgress,
+  ) async {
+    final request = await http.Client().send(
+      http.Request('GET', Uri.parse(url)),
     );
+    final totalBytes = request.contentLength ?? 0;
+    int downloadedBytes = 0;
+
+    final file = File(destinationPath);
+    final sink = file.openWrite();
+
+    await for (final chunk in request.stream) {
+      sink.add(chunk);
+      downloadedBytes += chunk.length;
+
+      if (onProgress != null && totalBytes > 0) {
+        final progress = downloadedBytes / totalBytes;
+        onProgress(progress);
+      }
+    }
+
+    await sink.close();
+  }
+
+  /// Get the full path to a model file, downloading it if necessary
+  static Future<String> _getModelPath(
+    String downloadUrl,
+    String fileName,
+    void Function(double progress)? onDownloadProgress,
+  ) async {
+    final modelsDir = await _getModelsDirectory();
+    final modelFilePath = path.join(modelsDir.path, fileName);
+
+    if (!File(modelFilePath).existsSync()) {
+      await _downloadModel(downloadUrl, modelFilePath, onDownloadProgress);
+    }
+
+    return modelFilePath;
   }
 
   /// Internal helper to generate from a prompt
@@ -123,9 +168,6 @@ class FlutterLocalLlm {
           response.requestId == requestId) {
         break;
       } else if (response is ErrorResponse) {
-        if (kDebugMode) {
-          print('[FlutterLocalLlm] Error: ${response.error}');
-        }
         throw Exception(response.error);
       }
     }
@@ -150,14 +192,12 @@ class FlutterLocalLlm {
 
   /// Clear chat history and LLM context
   void clearHistory() {
-    // Create new history
     chatHistory = LlmChatHistory();
 
-    // Re-add system prompt if it exists
-    if (_systemPrompt != null && _systemPrompt.isNotEmpty) {
-      chatHistory.addMessage(role: Role.system, content: _systemPrompt);
+    if (_config.systemPrompt != null && _config.systemPrompt!.isNotEmpty) {
+      chatHistory.addMessage(role: Role.system, content: _config.systemPrompt!);
     }
-    // Clear LLM context
+
     _isolate.sendCommand(ClearContextCommand());
   }
 
@@ -173,12 +213,7 @@ class FlutterLocalLlm {
     final tempHistory = LlmChatHistory();
     tempHistory.addMessage(role: role, content: message);
 
-    await for (final token in sendMessageWithHistory(
-      tempHistory,
-      addToHistory: addToHistory,
-    )) {
-      yield token;
-    }
+    yield* sendMessageWithHistory(tempHistory, addToHistory: addToHistory);
   }
 
   /// Send a message and wait for complete response
@@ -209,7 +244,7 @@ class FlutterLocalLlm {
     final tempMessages = LlmChatHistory();
     int remainingSpace = await getRemainingContextSpace();
     String newPrompt = messages.exportFormat(
-      _chatFormat,
+      _config.chatFormat,
       leaveLastAssistantOpen: true,
     );
     if (chatHistory.shouldTrimBeforePromptNoLlama(remainingSpace, newPrompt)) {
@@ -221,7 +256,7 @@ class FlutterLocalLlm {
     tempMessages.messages.addAll(messages.messages);
 
     final promptToSend = tempMessages.exportFormat(
-      _chatFormat,
+      _config.chatFormat,
       leaveLastAssistantOpen: true,
     );
     final responseBuffer = StringBuffer();
@@ -231,7 +266,6 @@ class FlutterLocalLlm {
     }
 
     if (addToHistory) {
-      // Add new messages to history
       for (final msg in messages.messages) {
         chatHistory.addMessage(role: msg.role, content: msg.content);
       }
@@ -260,9 +294,6 @@ class FlutterLocalLlm {
 
   /// Clean up resources
   void dispose() {
-    if (kDebugMode) {
-      print('[FlutterLocalLlm] Disposing...');
-    }
     _isolate.dispose();
   }
 }

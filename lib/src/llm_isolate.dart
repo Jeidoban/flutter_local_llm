@@ -1,9 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
-import 'package:flutter/foundation.dart';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 import 'models.dart';
-import 'library_setup.dart';
 
 // ============================================================================
 // Commands sent to isolate
@@ -71,91 +70,132 @@ class RemainingContextResponse extends IsolateResponse {
 }
 
 // ============================================================================
-// Helper Functions
+// Llama Manager
 // ============================================================================
 
-/// Get stop tokens for a given chat format
-List<String> _getStopTokens(ChatFormat chatFormat) {
-  switch (chatFormat) {
-    case ChatFormat.gemma:
-      return ['<end_of_turn>', '<eos>'];
-    case ChatFormat.chatml:
-      return ['<|im_end|>'];
-    case ChatFormat.alpaca:
-      return ['### Response:', '### Instruction:'];
-    default:
-      // Default fallback for other formats
-      return ['</s>', '<eos>'];
-  }
-}
+/// Manages the Llama instance and handles commands within the isolate
+class LlamaManager {
+  final SendPort _mainSendPort;
+  late Llama _llama;
+  late LLMConfig _config;
 
-/// Generate text from a prompt and stream tokens back to main isolate
-Future<String> _generateFromPrompt(
-  Llama llama,
-  String prompt,
-  ChatFormat chatFormat,
-  int requestId,
-  SendPort mainSendPort,
-  int nCtx,
-) async {
-  if (kDebugMode) {
-    print('[Isolate] Generating from prompt (ID: $requestId)');
-    print('[Isolate] Prompt length: ${prompt.length}');
+  LlamaManager(this._mainSendPort);
+
+  /// Get stop tokens for a given chat format
+  List<String> _getStopTokens(ChatFormat chatFormat) {
+    switch (chatFormat) {
+      case ChatFormat.gemma:
+        return ['<end_of_turn>', '<eos>'];
+      case ChatFormat.chatml:
+        return ['<|im_end|>'];
+      case ChatFormat.alpaca:
+        return ['### Response:', '### Instruction:'];
+      default:
+        return ['</s>', '<eos>'];
+    }
   }
 
-  // Set the prompt
-  llama.setPrompt(prompt);
+  /// Generate text from a prompt and stream tokens back to main isolate
+  Future<void> _generateFromPrompt(String prompt, int requestId) async {
+    _llama.setPrompt(prompt);
 
-  // Get stop tokens for this chat format
-  final stopTokens = _getStopTokens(chatFormat);
+    final stopTokens = _getStopTokens(_config.chatFormat);
+    bool isDone = false;
 
-  // Stream tokens and check for stop tokens
-  final responseBuffer = StringBuffer();
-  bool isDone = false;
-  late String token;
+    while (!isDone) {
+      final (token, done) = _llama.getNext();
+      isDone = done;
 
-  while (!isDone) {
-    (token, isDone) = llama.getNext();
-
-    // Check if this token is a stop token
-    bool shouldStop = false;
-    for (final stopToken in stopTokens) {
-      if (responseBuffer.toString().endsWith(stopToken) ||
-          token.contains(stopToken)) {
-        shouldStop = true;
-        // Remove the stop token from the response if it's already added
-        final currentResponse = responseBuffer.toString();
-        if (currentResponse.endsWith(stopToken)) {
-          responseBuffer.clear();
-          final endIndex = currentResponse.length - stopToken.length;
-          responseBuffer.write(currentResponse.substring(0, endIndex));
+      bool shouldStop = false;
+      for (final stopToken in stopTokens) {
+        if (token.contains(stopToken)) {
+          shouldStop = true;
+          break;
         }
-        break;
       }
+
+      if (shouldStop) break;
+
+      _mainSendPort.send(TokenResponse(token: token, requestId: requestId));
     }
 
-    if (shouldStop) {
-      if (kDebugMode) {
-        print('[Isolate] Hit stop token, stopping generation');
-      }
-      break;
+    _mainSendPort.send(CompletionResponse(requestId: requestId));
+  }
+
+  void _setupLlamaLibraryPath() {
+    // For iOS/macOS, the framework is embedded already and loaded
+    // from process.
+
+    if (Platform.isAndroid) {
+      // For Android, set the path to the .so file
+      Llama.libraryPath = 'libllama.so';
+    } else if (Platform.isLinux) {
+      Llama.libraryPath = 'libllama.so';
+    } else if (Platform.isWindows) {
+      Llama.libraryPath = 'llama.dll';
     }
-
-    responseBuffer.write(token);
-    mainSendPort.send(TokenResponse(token: token, requestId: requestId));
   }
 
-  // Get the full response and trim extra whitespace/newlines
-  final fullResponse = responseBuffer.toString().trim();
+  /// Handle a command from the main isolate
+  Future<void> handleCommand(IsolateCommand message) async {
+    try {
+      switch (message) {
+        case InitializeCommand():
+          _setupLlamaLibraryPath();
 
-  if (kDebugMode) {
-    print(
-      '[Isolate] Completed response (ID: $requestId), length: ${fullResponse.length}',
-    );
+          _config = message.config;
+
+          final contextParams = ContextParams()
+            ..nPredict = _config.nPredict
+            ..nCtx = _config.contextSize
+            ..nBatch = _config.nBatch
+            ..nThreads = _config.nThreads;
+
+          final samplerParams = SamplerParams()
+            ..temp = _config.temperature
+            ..topK = _config.topK
+            ..topP = _config.topP
+            ..minP = _config.minP
+            ..penaltyRepeat = _config.penaltyRepeat;
+
+          _llama = Llama(
+            message.modelPath,
+            contextParams: contextParams,
+            samplerParams: samplerParams,
+          );
+
+          _mainSendPort.send(InitializedResponse());
+        case GenerateFromPromptCommand():
+          await _generateFromPrompt(message.prompt, message.requestId);
+        case GetRemainingContextCommand():
+          final remaining = _llama.getRemainingContextSpace();
+          _mainSendPort.send(
+            RemainingContextResponse(
+              remaining: remaining,
+              requestId: message.requestId,
+            ),
+          );
+        case ClearContextCommand():
+          _llama.clear();
+        case DisposeCommand():
+          dispose();
+      }
+    } catch (e) {
+      _mainSendPort.send(
+        ErrorResponse(
+          error: e.toString(),
+          requestId: message is GenerateFromPromptCommand
+              ? message.requestId
+              : null,
+        ),
+      );
+    }
   }
 
-  mainSendPort.send(CompletionResponse(requestId: requestId));
-  return fullResponse;
+  /// Clean up resources
+  void dispose() {
+    _llama.dispose();
+  }
 }
 
 // ============================================================================
@@ -166,122 +206,10 @@ void _isolateEntryPoint(SendPort mainSendPort) {
   final receivePort = ReceivePort();
   mainSendPort.send(receivePort.sendPort);
 
-  Llama? llama;
-  ChatFormat? chatFormat;
-  int? nCtx;
+  final manager = LlamaManager(mainSendPort);
 
   receivePort.listen((message) async {
-    try {
-      if (message is InitializeCommand) {
-        if (kDebugMode) {
-          print('[Isolate] Initializing with model: ${message.modelPath}');
-        }
-
-        // Setup library path
-        setupLlamaLibraryPath();
-
-        // Create context params
-        final contextParams = ContextParams()
-          ..nPredict = message.config.nPredict
-          ..nCtx = message.config.contextSize
-          ..nBatch = message.config.nBatch
-          ..nThreads = message.config.nThreads;
-        // Create sampler params
-        final samplerParams = SamplerParams()
-          ..temp = message.config.temperature
-          ..topK = message.config.topK
-          ..topP = message.config.topP
-          ..minP = message.config.minP
-          ..penaltyRepeat = message.config.penaltyRepeat;
-
-        // Create Llama instance
-        llama = Llama(
-          message.modelPath,
-          contextParams: contextParams,
-          samplerParams: samplerParams,
-        );
-
-        // Store chat format and context size for later use
-        chatFormat = message.config.chatFormat;
-        nCtx = message.config.contextSize;
-
-        if (kDebugMode) {
-          print('[Isolate] Initialization complete');
-        }
-
-        mainSendPort.send(InitializedResponse());
-      } else if (message is GenerateFromPromptCommand) {
-        if (llama == null || chatFormat == null || nCtx == null) {
-          mainSendPort.send(
-            ErrorResponse(
-              error: 'Llama not initialized',
-              requestId: message.requestId,
-            ),
-          );
-          return;
-        }
-
-        // Generate from the provided prompt
-        await _generateFromPrompt(
-          llama!,
-          message.prompt,
-          chatFormat!,
-          message.requestId,
-          mainSendPort,
-          nCtx!,
-        );
-      } else if (message is GetRemainingContextCommand) {
-        if (llama == null) {
-          mainSendPort.send(
-            ErrorResponse(
-              error: 'Llama not initialized',
-              requestId: message.requestId,
-            ),
-          );
-          return;
-        }
-
-        final remaining = llama!.getRemainingContextSpace();
-        if (kDebugMode) {
-          print('[Isolate] Remaining context space: $remaining');
-        }
-        mainSendPort.send(
-          RemainingContextResponse(
-            remaining: remaining,
-            requestId: message.requestId,
-          ),
-        );
-      } else if (message is ClearContextCommand) {
-        if (llama != null) {
-          if (kDebugMode) {
-            print('[Isolate] Clearing context');
-          }
-          llama!.clear();
-        }
-      } else if (message is DisposeCommand) {
-        if (kDebugMode) {
-          print('[Isolate] Disposing resources');
-        }
-
-        llama?.dispose();
-        llama = null;
-        chatFormat = null;
-      }
-    } catch (e, stackTrace) {
-      if (kDebugMode) {
-        print('[Isolate] Error: $e');
-        print('[Isolate] Stack trace: $stackTrace');
-      }
-
-      mainSendPort.send(
-        ErrorResponse(
-          error: e.toString(),
-          requestId: message is GenerateFromPromptCommand
-              ? message.requestId
-              : null,
-        ),
-      );
-    }
+    await manager.handleCommand(message);
   });
 }
 
@@ -314,10 +242,6 @@ class LLMIsolate {
 
   /// Spawn a new isolate and initialize it with the model
   static Future<LLMIsolate> spawn(String modelPath, LLMConfig config) async {
-    if (kDebugMode) {
-      print('[LLMIsolate] Spawning isolate...');
-    }
-
     // Create receive port for main isolate
     final receivePort = ReceivePort();
 
@@ -332,10 +256,6 @@ class LLMIsolate {
 
     // Get send port from spawned isolate (first message)
     final sendPort = await broadcastStream.first as SendPort;
-
-    if (kDebugMode) {
-      print('[LLMIsolate] Isolate spawned, waiting for initialization...');
-    }
 
     // Create isolate manager with broadcast stream
     final llmIsolate = LLMIsolate._(
@@ -355,10 +275,6 @@ class LLMIsolate {
       (response) => response is InitializedResponse,
     );
 
-    if (kDebugMode) {
-      print('[LLMIsolate] Isolate initialized successfully');
-    }
-
     return llmIsolate;
   }
 
@@ -372,17 +288,9 @@ class LLMIsolate {
 
   /// Dispose the isolate and clean up resources
   void dispose() {
-    if (kDebugMode) {
-      print('[LLMIsolate] Disposing isolate...');
-    }
-
     sendCommand(DisposeCommand());
     _isolate.kill();
     _receivePort.close();
     _responseController.close();
-
-    if (kDebugMode) {
-      print('[LLMIsolate] Isolate disposed');
-    }
   }
 }

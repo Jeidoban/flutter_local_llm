@@ -6,11 +6,6 @@ import 'package:flutter_local_llm/flutter_local_llm.dart';
 ///
 /// This shows how to use the LocalLlmProvider to wrap FlutterLocalLlm
 /// and use it with the pre-built LlmChatView widget from flutter_ai_toolkit.
-///
-/// Compared to the custom ChatScreen, this provides:
-/// - Less code (no custom UI implementation needed)
-/// - Built-in features from flutter_ai_toolkit (formatting, markdown, etc.)
-/// - Consistent UX with other LLM providers
 class AiToolkitChatScreen extends StatefulWidget {
   const AiToolkitChatScreen({super.key});
 
@@ -34,36 +29,26 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
     try {
       setState(() => _loadingStatus = 'Loading model...');
 
-      print('DEBUG: Starting FlutterLocalLlm initialization...');
-
       final llm = await FlutterLocalLlm.init(
         model: LLMModel.gemma3nE2B,
         systemPrompt: 'You are a helpful, concise assistant.',
-        contextSize: 256,
+        contextSize: 1024,
         onDownloadProgress: (progress) {
           setState(() {
             _downloadProgress = progress;
             _loadingStatus =
                 'Downloading: ${(progress * 100).toStringAsFixed(1)}%';
           });
-          print(
-            'DEBUG: Download progress: ${(progress * 100).toStringAsFixed(1)}%',
-          );
         },
       );
 
-      print('DEBUG: Creating LocalLlmProvider...');
-
       final provider = LocalLlmProvider(llm: llm);
-
-      print('DEBUG: LocalLlmProvider ready');
 
       setState(() {
         _provider = provider;
         _isLoading = false;
       });
     } catch (e) {
-      print('DEBUG: Error initializing: $e');
       setState(() {
         _isLoading = false;
         _loadingStatus = 'Error: $e';
@@ -88,7 +73,7 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
             IconButton(
               icon: const Icon(Icons.delete_outline),
               onPressed: () {
-                _provider?.clearHistory();
+                _provider?.history = [];
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Chat history cleared')),
                 );

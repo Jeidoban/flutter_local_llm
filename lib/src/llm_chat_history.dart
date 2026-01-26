@@ -1,8 +1,10 @@
-import 'package:flutter_local_llm/flutter_local_llm.dart';
+import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
 class LlmChatHistory extends ChatHistory {
   LlmChatHistory({super.keepRecentPairs});
 
+  /// Automatically trims messages to fit within remaining space.
+  /// Doesn't require Llama instance.
   bool autoTrimForSpaceNoLlama(int remainingSpace, {int reserveTokens = 100}) {
     if (remainingSpace > reserveTokens) return false;
 
@@ -26,6 +28,8 @@ class LlmChatHistory extends ChatHistory {
     return true;
   }
 
+  /// Check if trimming is needed before adding a new prompt.
+  /// Doesn't require Llama instance.
   bool shouldTrimBeforePromptNoLlama(int remainingSpace, String newPrompt) {
     int estimatedTokens = (newPrompt.length / 4).ceil() + 50;
     return remainingSpace < estimatedTokens;
