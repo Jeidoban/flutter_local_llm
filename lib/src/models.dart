@@ -1,21 +1,26 @@
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
 /// Supported models for FlutterLocalLLM
-enum LLMModel { gemma3nE2B }
+// ignore: constant_identifier_names
+enum LLMModel { gemma3n_E2BTextOnly, gemma3_4b }
 
 /// Extension to get model details
 extension LLMModelExtension on LLMModel {
   String get name {
     switch (this) {
-      case LLMModel.gemma3nE2B:
+      case LLMModel.gemma3n_E2BTextOnly:
         return 'gemma-3n-E2B-it-Q4_K_M';
+      case LLMModel.gemma3_4b:
+        return 'gemma-3-4b-it-Q5_K_M';
     }
   }
 
   String get url {
     switch (this) {
-      case LLMModel.gemma3nE2B:
+      case LLMModel.gemma3n_E2BTextOnly:
         return 'https://huggingface.co/unsloth/gemma-3n-E2B-it-GGUF/resolve/main/gemma-3n-E2B-it-Q4_K_M.gguf';
+      case LLMModel.gemma3_4b:
+        return 'https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q5_K_M.gguf';
     }
   }
 
@@ -23,9 +28,28 @@ extension LLMModelExtension on LLMModel {
     return '$name.gguf';
   }
 
+  String? get imageUrl {
+    switch (this) {
+      case LLMModel.gemma3n_E2BTextOnly:
+        return null; // Text-only model
+      case LLMModel.gemma3_4b:
+        return 'https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/mmproj-F16.gguf';
+    }
+  }
+
+  String? get imageFileName {
+    switch (this) {
+      case LLMModel.gemma3n_E2BTextOnly:
+        return null;
+      case LLMModel.gemma3_4b:
+        return '$name-mmproj-F16.gguf';
+    }
+  }
+
   ChatFormat get chatFormat {
     switch (this) {
-      case LLMModel.gemma3nE2B:
+      case LLMModel.gemma3n_E2BTextOnly:
+      case LLMModel.gemma3_4b:
         return ChatFormat.gemma;
     }
   }
@@ -34,7 +58,8 @@ extension LLMModelExtension on LLMModel {
 /// Configuration for LLM initialization
 class LLMConfig {
   final LLMModel model;
-  final String? customUrl;
+  final String? customModelUrl;
+  final String? customImageModelUrl;
   final String? systemPrompt;
   final int contextSize;
   final int nPredict;
@@ -48,8 +73,9 @@ class LLMConfig {
   final ChatFormat chatFormat;
 
   LLMConfig({
-    this.model = LLMModel.gemma3nE2B,
-    this.customUrl,
+    this.model = LLMModel.gemma3n_E2BTextOnly,
+    this.customModelUrl,
+    this.customImageModelUrl,
     this.systemPrompt,
     this.contextSize = 16384,
     this.nPredict = -1,
@@ -63,11 +89,19 @@ class LLMConfig {
     ChatFormat? chatFormat,
   }) : chatFormat = chatFormat ?? model.chatFormat;
 
-  String get downloadUrl => customUrl ?? model.url;
+  String get downloadUrl => customModelUrl ?? model.url;
   String get fileName {
-    if (customUrl != null) {
-      return Uri.parse(customUrl!).pathSegments.last;
+    if (customModelUrl != null) {
+      return Uri.parse(customModelUrl!).pathSegments.last;
     }
     return model.fileName;
+  }
+
+  String? get imageDownloadUrl => customImageModelUrl ?? model.imageUrl;
+  String? get imageFileName {
+    if (customImageModelUrl != null) {
+      return Uri.parse(customImageModelUrl!).pathSegments.last;
+    }
+    return model.imageFileName;
   }
 }
