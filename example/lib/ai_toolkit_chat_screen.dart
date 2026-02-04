@@ -31,9 +31,8 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
       setState(() => _loadingStatus = 'Loading model...');
 
       final llm = await FlutterLocalLlm.init(
-        model: LLMModel.gemma3_4b,
+        model: LLMModel.gemma3_4b_q5_mm,
         systemPrompt: 'You are a helpful, concise assistant.',
-        contextSize: 16000,
         onModelDownloadProgress: (progress) {
           setState(() {
             _modelDownloadProgress = progress;

@@ -115,11 +115,18 @@ class LlamaManager {
 
     Stream<String> stream;
     if (attachmentPaths != null && attachmentPaths.isNotEmpty) {
+      // Insert <image> tokens into the prompt for each attachment
+      final imageTokens = List.filled(
+        attachmentPaths.length,
+        '<image>',
+      ).join('');
+      final promptWithImages = '$imageTokens$prompt';
+
       // Use multimodal generation with attachments
       final attachments = attachmentPaths
           .map((path) => LlamaImage.fromFile(File(path)))
           .toList();
-      stream = _llama.generateWithMedia(prompt, inputs: attachments);
+      stream = _llama.generateWithMedia(promptWithImages, inputs: attachments);
     } else {
       // Use text-only generation
       _llama.setPrompt(prompt);

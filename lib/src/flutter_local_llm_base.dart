@@ -50,15 +50,15 @@ class FlutterLocalLlm {
 
   /// Initialize FlutterLocalLlm with a model
   static Future<FlutterLocalLlm> init({
-    LLMModel model = LLMModel.gemma3_4b,
+    LLMModel model = LLMModel.gemma3_4b_q5_mm,
     String? systemPrompt,
     String? customModelUrl,
     String? customImageModelUrl,
     void Function(double progress)? onModelDownloadProgress,
     void Function(double progress)? onImageModelDownloadProgress,
-    int contextSize = 16384,
+    int contextSize = 8096,
     int nPredict = -1,
-    int nBatch = 2048,
+    int nBatch = 512,
     int nThreads = 8,
     double temperature = 0.7,
     int topK = 64,
@@ -169,7 +169,10 @@ class FlutterLocalLlm {
   }
 
   /// Internal helper to generate from a prompt
-  Stream<String> _generateFromPrompt(String prompt, {List<File>? attachments}) async* {
+  Stream<String> _generateFromPrompt(
+    String prompt, {
+    List<File>? attachments,
+  }) async* {
     final requestId = _nextRequestId++;
 
     // Convert Files to paths
@@ -295,7 +298,10 @@ class FlutterLocalLlm {
       leaveLastAssistantOpen: true,
     );
     final responseBuffer = StringBuffer();
-    await for (final token in _generateFromPrompt(promptToSend, attachments: images)) {
+    await for (final token in _generateFromPrompt(
+      promptToSend,
+      attachments: images,
+    )) {
       responseBuffer.write(token);
       yield token;
     }

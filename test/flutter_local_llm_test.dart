@@ -10,7 +10,7 @@ void main() {
   });
 
   test('LLMModel has correct properties', () {
-    final model = LLMModel.gemma3n_E2BTextOnly;
+    final model = LLMModel.gemma3n_E2B_q4;
     expect(model.name, isNotEmpty);
     expect(model.url, isNotEmpty);
     expect(model.fileName, isNotEmpty);
@@ -25,7 +25,7 @@ void main() {
 
   test('LLMConfig has sensible defaults', () {
     final config = LLMConfig();
-    expect(config.model, LLMModel.gemma3n_E2BTextOnly);
+    expect(config.model, LLMModel.gemma3n_E2B_q4);
     expect(config.contextSize, 8192);
     expect(config.temperature, 0.7);
     expect(config.topK, 64);
