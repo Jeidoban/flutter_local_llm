@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_ai_toolkit/flutter_ai_toolkit.dart';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
@@ -33,7 +34,8 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     String prompt, {
     Iterable<Attachment> attachments = const [],
   }) async* {
-    yield* _llm.sendMessage(prompt, addToHistory: false);
+    final attachmentFiles = await _extractAttachmentFiles(attachments);
+    yield* _llm.sendMessage(prompt, addToHistory: false, images: attachmentFiles);
   }
 
   @override
@@ -41,11 +43,11 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     String prompt, {
     Iterable<Attachment> attachments = const [],
   }) async* {
-    // Create full prompt with attachments
-    final fullPrompt = prompt + _attachmentsToText(attachments);
+    // Extract attachment files from attachments
+    final attachmentFiles = await _extractAttachmentFiles(attachments);
 
     // Create user message and add to history
-    final userMessage = ChatMessage.user(fullPrompt, attachments.toList());
+    final userMessage = ChatMessage.user(prompt, attachments.toList());
     _chatHistory.add(userMessage);
 
     // Create empty LLM message
@@ -53,9 +55,13 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     _chatHistory.add(llmMessage);
 
     try {
-      // Send message and stream tokens
+      // Send message and stream tokens with attachments
       final buffer = StringBuffer();
-      await for (final token in _llm.sendMessage(fullPrompt, role: Role.user)) {
+      await for (final token in _llm.sendMessage(
+        prompt,
+        role: Role.user,
+        images: attachmentFiles,
+      )) {
         buffer.write(token);
         llmMessage.append(token);
         yield token;
@@ -100,32 +106,23 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     return Message(role: role, content: msg.text ?? '');
   }
 
-  /// Convert attachments to text annotations
-  ///
-  /// Since the current implementation doesn't support multimodal input,
-  /// this converts attachments to text descriptions that are appended
-  /// to the prompt.
-  ///
-  /// File attachments show name and MIME type.
-  /// Link attachments show the URL.
-  String _attachmentsToText(Iterable<Attachment> attachments) {
-    if (attachments.isEmpty) return '';
+  /// Extract attachment files from attachments for multimodal input
+  /// Writes attachment bytes to temporary files and returns the file list
+  Future<List<File>?> _extractAttachmentFiles(Iterable<Attachment> attachments) async {
+    final attachmentFiles = <File>[];
 
-    final buffer = StringBuffer('\n\n[Attachments:\n');
     for (final attachment in attachments) {
       if (attachment is FileAttachment) {
-        buffer.write('- File: ${attachment.name} (${attachment.mimeType})\n');
-        if (kDebugMode) {
-          print(
-            '[LocalLlmProvider] File attachment not yet supported: ${attachment.name}',
-          );
-        }
-      } else if (attachment is LinkAttachment) {
-        buffer.write('- Link: ${attachment.url}\n');
+        // Create temp file from bytes
+        final tempDir = Directory.systemTemp;
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final tempFile = File('${tempDir.path}/flutter_local_llm_${timestamp}_${attachment.name}');
+        await tempFile.writeAsBytes(attachment.bytes);
+        attachmentFiles.add(tempFile);
       }
     }
-    buffer.write(']');
-    return buffer.toString();
+
+    return attachmentFiles.isEmpty ? null : attachmentFiles;
   }
 
   /// Sync internal ChatMessage history to FlutterLocalLlm

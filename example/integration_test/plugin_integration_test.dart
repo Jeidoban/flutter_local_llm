@@ -16,7 +16,7 @@ void main() {
 
   testWidgets('FlutterLocalLlm API is available', (WidgetTester tester) async {
     // Verify that the API types are accessible
-    expect(LLMModel.gemma3nE2B, isNotNull);
+    expect(LLMModel.gemma3n_E2B_q4, isNotNull);
     expect(Role.user, isNotNull);
 
     // Note: We don't actually initialize the model here as it would be slow

@@ -17,7 +17,8 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
   LocalLlmProvider? _provider;
   bool _isLoading = true;
   String _loadingStatus = 'Initializing...';
-  double _downloadProgress = 0.0;
+  double _modelDownloadProgress = 0.0;
+  double _imageModelDownloadProgress = 0.0;
 
   @override
   void initState() {
@@ -30,14 +31,20 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
       setState(() => _loadingStatus = 'Loading model...');
 
       final llm = await FlutterLocalLlm.init(
-        model: LLMModel.gemma3nE2B,
+        model: LLMModel.gemma3_4b_q5_mm,
         systemPrompt: 'You are a helpful, concise assistant.',
-        contextSize: 1024,
-        onDownloadProgress: (progress) {
+        onModelDownloadProgress: (progress) {
           setState(() {
-            _downloadProgress = progress;
+            _modelDownloadProgress = progress;
             _loadingStatus =
-                'Downloading: ${(progress * 100).toStringAsFixed(1)}%';
+                'Downloading model: ${(progress * 100).toStringAsFixed(1)}%';
+          });
+        },
+        onImageModelDownloadProgress: (progress) {
+          setState(() {
+            _imageModelDownloadProgress = progress;
+            _loadingStatus =
+                'Downloading image model: ${(progress * 100).toStringAsFixed(1)}%';
           });
         },
       );
@@ -90,10 +97,20 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
                   const CircularProgressIndicator(),
                   const SizedBox(height: 16),
                   Text(_loadingStatus),
-                  if (_downloadProgress > 0 && _downloadProgress < 1)
+                  if (_modelDownloadProgress > 0 && _modelDownloadProgress < 1)
                     Padding(
                       padding: const EdgeInsets.all(16),
-                      child: LinearProgressIndicator(value: _downloadProgress),
+                      child: LinearProgressIndicator(
+                        value: _modelDownloadProgress,
+                      ),
+                    ),
+                  if (_imageModelDownloadProgress > 0 &&
+                      _imageModelDownloadProgress < 1)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: LinearProgressIndicator(
+                        value: _imageModelDownloadProgress,
+                      ),
                     ),
                 ],
               ),

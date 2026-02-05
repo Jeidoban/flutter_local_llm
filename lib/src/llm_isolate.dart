@@ -13,15 +13,25 @@ sealed class IsolateCommand {}
 class InitializeCommand extends IsolateCommand {
   final String modelPath;
   final LLMConfig config;
+  final String? imageModelPath;
 
-  InitializeCommand({required this.modelPath, required this.config});
+  InitializeCommand({
+    required this.modelPath,
+    required this.config,
+    this.imageModelPath,
+  });
 }
 
 class GenerateFromPromptCommand extends IsolateCommand {
   final String prompt;
   final int requestId;
+  final List<String>? attachmentPaths;
 
-  GenerateFromPromptCommand({required this.prompt, required this.requestId});
+  GenerateFromPromptCommand({
+    required this.prompt,
+    required this.requestId,
+    this.attachmentPaths,
+  });
 }
 
 class ClearContextCommand extends IsolateCommand {}
@@ -96,16 +106,34 @@ class LlamaManager {
   }
 
   /// Generate text from a prompt and stream tokens back to main isolate
-  Future<void> _generateFromPrompt(String prompt, int requestId) async {
-    _llama.setPrompt(prompt);
-
+  Future<void> _generateFromPrompt(
+    String prompt,
+    int requestId, {
+    List<String>? attachmentPaths,
+  }) async {
     final stopTokens = _getStopTokens(_config.chatFormat);
-    bool isDone = false;
 
-    while (!isDone) {
-      final (token, done) = _llama.getNext();
-      isDone = done;
+    Stream<String> stream;
+    if (attachmentPaths != null && attachmentPaths.isNotEmpty) {
+      // Insert <image> tokens into the prompt for each attachment
+      final imageTokens = List.filled(
+        attachmentPaths.length,
+        '<image>',
+      ).join('');
+      final promptWithImages = '$imageTokens$prompt';
 
+      // Use multimodal generation with attachments
+      final attachments = attachmentPaths
+          .map((path) => LlamaImage.fromFile(File(path)))
+          .toList();
+      stream = _llama.generateWithMedia(promptWithImages, inputs: attachments);
+    } else {
+      // Use text-only generation
+      _llama.setPrompt(prompt);
+      stream = _llama.generateText();
+    }
+
+    await for (final token in stream) {
       bool shouldStop = false;
       for (final stopToken in stopTokens) {
         if (token.contains(stopToken)) {
@@ -162,11 +190,16 @@ class LlamaManager {
             message.modelPath,
             contextParams: contextParams,
             samplerParams: samplerParams,
+            mmprojPath: message.imageModelPath,
           );
 
           _mainSendPort.send(InitializedResponse());
         case GenerateFromPromptCommand():
-          await _generateFromPrompt(message.prompt, message.requestId);
+          await _generateFromPrompt(
+            message.prompt,
+            message.requestId,
+            attachmentPaths: message.attachmentPaths,
+          );
         case GetRemainingContextCommand():
           final remaining = _llama.getRemainingContextSpace();
           _mainSendPort.send(
@@ -241,7 +274,11 @@ class LLMIsolate {
   }
 
   /// Spawn a new isolate and initialize it with the model
-  static Future<LLMIsolate> spawn(String modelPath, LLMConfig config) async {
+  static Future<LLMIsolate> spawn(
+    String modelPath,
+    LLMConfig config, {
+    String? imageModelPath,
+  }) async {
     // Create receive port for main isolate
     final receivePort = ReceivePort();
 
@@ -267,13 +304,23 @@ class LLMIsolate {
 
     // Send initialization command
     llmIsolate.sendCommand(
-      InitializeCommand(modelPath: modelPath, config: config),
+      InitializeCommand(
+        modelPath: modelPath,
+        config: config,
+        imageModelPath: imageModelPath,
+      ),
     );
 
     // Wait for initialization to complete
-    await llmIsolate.responseStream.firstWhere(
-      (response) => response is InitializedResponse,
+    final response = await llmIsolate.responseStream.firstWhere(
+      (response) =>
+          response is InitializedResponse || response is ErrorResponse,
     );
+
+    if (response is ErrorResponse) {
+      llmIsolate.dispose();
+      throw Exception('Failed to initialize model: ${response.error}');
+    }
 
     return llmIsolate;
   }

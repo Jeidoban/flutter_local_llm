@@ -1,0 +1,4 @@
+[submodule "src/llama.cpp"]
+	path = src/llama.cpp
+	url = https://github.com/Jeidoban/llama.cpp.git
+	branch = flutter_local_llm

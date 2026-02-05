@@ -50,13 +50,15 @@ class FlutterLocalLlm {
 
   /// Initialize FlutterLocalLlm with a model
   static Future<FlutterLocalLlm> init({
-    LLMModel model = LLMModel.gemma3nE2B,
+    LLMModel model = LLMModel.gemma3_4b_q5_mm,
     String? systemPrompt,
-    String? customUrl,
-    void Function(double progress)? onDownloadProgress,
-    int contextSize = 16384,
+    String? customModelUrl,
+    String? customImageModelUrl,
+    void Function(double progress)? onModelDownloadProgress,
+    void Function(double progress)? onImageModelDownloadProgress,
+    int contextSize = 8096,
     int nPredict = -1,
-    int nBatch = 2048,
+    int nBatch = 512,
     int nThreads = 8,
     double temperature = 0.7,
     int topK = 64,
@@ -67,7 +69,8 @@ class FlutterLocalLlm {
     // Create config
     final config = LLMConfig(
       model: model,
-      customUrl: customUrl,
+      customModelUrl: customModelUrl,
+      customImageModelUrl: customImageModelUrl,
       systemPrompt: systemPrompt ?? 'You are a helpful assistant.',
       contextSize: contextSize,
       nPredict: nPredict,
@@ -84,11 +87,25 @@ class FlutterLocalLlm {
     final modelPath = await _getModelPath(
       config.downloadUrl,
       config.fileName,
-      onDownloadProgress,
+      onModelDownloadProgress,
     );
 
+    // Download image model if needed (for multimodal support)
+    String? imageModelPath;
+    if (config.imageDownloadUrl != null && config.imageFileName != null) {
+      imageModelPath = await _getModelPath(
+        config.imageDownloadUrl!,
+        config.imageFileName!,
+        onImageModelDownloadProgress,
+      );
+    }
+
     // Spawn isolate and initialize
-    final isolate = await LLMIsolate.spawn(modelPath, config);
+    final isolate = await LLMIsolate.spawn(
+      modelPath,
+      config,
+      imageModelPath: imageModelPath,
+    );
 
     return FlutterLocalLlm._(isolate: isolate, config: config);
   }
@@ -152,12 +169,22 @@ class FlutterLocalLlm {
   }
 
   /// Internal helper to generate from a prompt
-  Stream<String> _generateFromPrompt(String prompt) async* {
+  Stream<String> _generateFromPrompt(
+    String prompt, {
+    List<File>? attachments,
+  }) async* {
     final requestId = _nextRequestId++;
+
+    // Convert Files to paths
+    final attachmentPaths = attachments?.map((file) => file.path).toList();
 
     // Send command to isolate
     _isolate.sendCommand(
-      GenerateFromPromptCommand(prompt: prompt, requestId: requestId),
+      GenerateFromPromptCommand(
+        prompt: prompt,
+        requestId: requestId,
+        attachmentPaths: attachmentPaths,
+      ),
     );
 
     // Listen for tokens
@@ -205,28 +232,37 @@ class FlutterLocalLlm {
   ///
   /// By default, adds the message and response to chat history.
   /// Set [addToHistory] to false for stateless generation.
+  /// Optionally attach [images] for multimodal input.
   Stream<String> sendMessage(
     String message, {
     Role role = Role.user,
     bool addToHistory = true,
+    List<File>? images,
   }) async* {
     final tempHistory = LlmChatHistory();
     tempHistory.addMessage(role: role, content: message);
 
-    yield* sendMessageWithHistory(tempHistory, addToHistory: addToHistory);
+    yield* sendMessageWithHistory(
+      tempHistory,
+      addToHistory: addToHistory,
+      images: images,
+    );
   }
 
   /// Send a message and wait for complete response
+  /// Optionally attach [images] for multimodal input.
   Future<String> sendMessageComplete(
     String message, {
     Role role = Role.user,
     bool addToHistory = true,
+    List<File>? images,
   }) async {
     final buffer = StringBuffer();
     await for (final token in sendMessage(
       message,
       role: role,
       addToHistory: addToHistory,
+      images: images,
     )) {
       buffer.write(token);
     }
@@ -237,9 +273,11 @@ class FlutterLocalLlm {
   ///
   /// By default, adds messages and response to chat history.
   /// Set [addToHistory] to false for stateless generation.
+  /// Optionally attach [images] for multimodal input.
   Stream<String> sendMessageWithHistory(
     LlmChatHistory messages, {
     bool addToHistory = true,
+    List<File>? images,
   }) async* {
     final tempMessages = LlmChatHistory();
     int remainingSpace = await getRemainingContextSpace();
@@ -260,7 +298,10 @@ class FlutterLocalLlm {
       leaveLastAssistantOpen: true,
     );
     final responseBuffer = StringBuffer();
-    await for (final token in _generateFromPrompt(promptToSend)) {
+    await for (final token in _generateFromPrompt(
+      promptToSend,
+      attachments: images,
+    )) {
       responseBuffer.write(token);
       yield token;
     }
@@ -278,14 +319,17 @@ class FlutterLocalLlm {
   }
 
   /// Send multiple messages and wait for complete response
+  /// Optionally attach [images] for multimodal input.
   Future<String> sendMessageWithHistoryComplete(
     LlmChatHistory messages, {
     bool addToHistory = true,
+    List<File>? images,
   }) async {
     final buffer = StringBuffer();
     await for (final token in sendMessageWithHistory(
       messages,
       addToHistory: addToHistory,
+      images: images,
     )) {
       buffer.write(token);
     }
