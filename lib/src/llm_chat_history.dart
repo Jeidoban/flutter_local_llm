@@ -1,7 +1,18 @@
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
 class LlmChatHistory extends ChatHistory {
-  LlmChatHistory({super.keepRecentPairs});
+  String title;
+  DateTime createdAt;
+  DateTime updatedAt;
+
+  LlmChatHistory({
+    super.keepRecentPairs,
+    String? title,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  })  : title = title ?? 'New Chat',
+        createdAt = createdAt ?? DateTime.now(),
+        updatedAt = updatedAt ?? DateTime.now();
 
   /// Automatically trims messages to fit within remaining space.
   /// Doesn't require Llama instance.
@@ -33,5 +44,28 @@ class LlmChatHistory extends ChatHistory {
   bool shouldTrimBeforePromptNoLlama(int remainingSpace, String newPrompt) {
     int estimatedTokens = (newPrompt.length / 4).ceil() + 50;
     return remainingSpace < estimatedTokens;
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    final json = super.toJson();
+    json['title'] = title;
+    json['createdAt'] = createdAt.toIso8601String();
+    json['updatedAt'] = updatedAt.toIso8601String();
+    return json;
+  }
+
+  factory LlmChatHistory.fromJson(Map<String, dynamic> json) {
+    final chatHistory = ChatHistory.fromJson(json);
+    return LlmChatHistory(
+      keepRecentPairs: chatHistory.keepRecentPairs,
+      title: json['title'] as String?,
+      createdAt: json['createdAt'] != null
+          ? DateTime.parse(json['createdAt'] as String)
+          : null,
+      updatedAt: json['updatedAt'] != null
+          ? DateTime.parse(json['updatedAt'] as String)
+          : null,
+    )..messages.addAll(chatHistory.messages);
   }
 }

@@ -25,8 +25,8 @@ void main() {
 
   test('LLMConfig has sensible defaults', () {
     final config = LLMConfig();
-    expect(config.model, LLMModel.gemma3n_E2B_q4);
-    expect(config.contextSize, 8192);
+    expect(config.model, LLMModel.gemma3_4b_q5_mm);
+    expect(config.contextSize, 16384);
     expect(config.temperature, 0.7);
     expect(config.topK, 64);
     expect(config.topP, 0.95);
