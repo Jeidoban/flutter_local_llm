@@ -22,6 +22,7 @@ import 'llm_isolate.dart';
 class FlutterLocalLlm {
   final LLMIsolate _isolate;
   final LLMConfig _config;
+  final int keepRecentPairs;
   int _nextRequestId = 0;
 
   // List of all chat histories
@@ -49,20 +50,24 @@ class FlutterLocalLlm {
   int? get activeChatIndex => _activeChatIndex;
 
   // Private constructor
-  FlutterLocalLlm._({required LLMIsolate isolate, required LLMConfig config})
-    : _isolate = isolate,
-      _config = config;
+  FlutterLocalLlm._({
+    required LLMIsolate isolate,
+    required LLMConfig config,
+    required this.keepRecentPairs,
+  }) : _isolate = isolate,
+       _config = config;
 
   /// Initialize FlutterLocalLlm with a model
   static Future<FlutterLocalLlm> init({
-    LLMModel model = LLMModel.gemma3_4b_q5_mm,
+    LLMModel model = LLMModel.gemma3_1b_q5,
     String? systemPrompt,
     String? customModelUrl,
     String? customImageModelUrl,
     void Function(double progress)? onDownloadProgress,
     int contextSize = 8096,
     int nPredict = -1,
-    int nBatch = 8096,
+    int? nBatch,
+    int? messagePairsToKeepWhenClearingContext,
     int nThreads = 8,
     double temperature = 0.7,
     int topK = 64,
@@ -73,15 +78,32 @@ class FlutterLocalLlm {
     // Migrate old model directory if it exists
     await _migrateOldModels();
 
+    // Default batch size to context size if not specified
+    final batchSize = nBatch ?? contextSize;
+
+    // Calculate keepRecentPairs based on context size if not provided
+    // 4096: 2 pairs, 8096: 4 pairs, 16384: 8 pairs, etc.
+    final effectiveKeepRecentPairs =
+        messagePairsToKeepWhenClearingContext ??
+        (contextSize / 2048).round().clamp(1, 10);
+
+    // Build system prompt with context size guidance if not provided
+    final effectiveSystemPrompt =
+        systemPrompt ??
+        'You are a helpful assistant. Please keep your responses concise, '
+            'answer directly what the user asks, avoid unnecessary elaboration. '
+            'and limit them to an absolute maximum of ${(contextSize / 2).round()} '
+            'tokens to fit within the conversation context.';
+
     // Create config
     final config = LLMConfig(
       model: model,
       customModelUrl: customModelUrl,
       customImageModelUrl: customImageModelUrl,
-      systemPrompt: systemPrompt ?? 'You are a helpful assistant.',
+      systemPrompt: effectiveSystemPrompt,
       contextSize: contextSize,
       nPredict: nPredict,
-      nBatch: nBatch,
+      nBatch: batchSize,
       nThreads: nThreads,
       temperature: temperature,
       topK: topK,
@@ -122,7 +144,11 @@ class FlutterLocalLlm {
       imageModelPath: imageModelPath,
     );
 
-    final instance = FlutterLocalLlm._(isolate: isolate, config: config);
+    final instance = FlutterLocalLlm._(
+      isolate: isolate,
+      config: config,
+      keepRecentPairs: effectiveKeepRecentPairs,
+    );
 
     // Load chats from storage
     await instance._loadChatsFromJson();
@@ -321,6 +347,7 @@ class FlutterLocalLlm {
   /// Clear the current chat's history and LLM context
   Future<void> clearHistory() async {
     activeChat.messages.clear();
+    activeChat.fullHistory.clear();
 
     if (_config.systemPrompt != null && _config.systemPrompt!.isNotEmpty) {
       activeChat.addMessage(role: Role.system, content: _config.systemPrompt!);
@@ -479,13 +506,48 @@ class FlutterLocalLlm {
     // Check if context is empty (just cleared or first message)
     final contextIsEmpty = remainingSpace >= _config.contextSize - 100;
 
-    // Track if we're including history (need to collect images from history)
-    if (activeChat.shouldTrimBeforePromptNoLlama(remainingSpace, newPrompt)) {
-      activeChat.autoTrimForSpaceNoLlama(remainingSpace);
+    // Count images in new messages for token estimation
+    final newMessageImageCount = messages.messages
+        .expand((msg) => msg.images)
+        .length;
+
+    // Determine if we need to rebuild context with history
+    final needsHistoryRebuild =
+        contextIsEmpty ||
+        activeChat.shouldTrimBeforePromptNoLlama(
+          newPrompt,
+          remainingSpace,
+          _config.contextSize,
+          imageCount: newMessageImageCount,
+        );
+
+    if (needsHistoryRebuild) {
+      // Create test prompt with full history to check if it fits
+      final testMessages = LlmChatHistory();
+      testMessages.messages.addAll(activeChat.messages);
+      testMessages.messages.addAll(messages.messages);
+      final fullPrompt = testMessages.exportFormat(
+        _config.chatFormat,
+        leaveLastAssistantOpen: true,
+      );
+
+      // Count total images (history + new messages)
+      final totalImageCount = testMessages.messages
+          .expand((msg) => msg.images)
+          .length;
+
+      // Trim history if full prompt doesn't fit
+      if (activeChat.shouldTrimBeforePromptNoLlama(
+        fullPrompt,
+        remainingSpace,
+        _config.contextSize,
+        imageCount: totalImageCount,
+      )) {
+        activeChat.autoTrimForSpaceNoLlama(keepRecentPairs: keepRecentPairs);
+      }
+
+      // Clear context and add (possibly trimmed) history
       _isolate.sendCommand(ClearContextCommand());
-      tempMessages.messages.addAll(activeChat.messages);
-    } else if (contextIsEmpty) {
-      // Context is empty (chat switched or first message), include full history
       tempMessages.messages.addAll(activeChat.messages);
     }
 
@@ -550,7 +612,6 @@ class FlutterLocalLlm {
   Future<String> sendMessageWithHistoryComplete(
     LlmChatHistory messages, {
     bool addToHistory = true,
-    List<File>? images,
   }) async {
     final buffer = StringBuffer();
     await for (final token in sendMessageWithHistory(

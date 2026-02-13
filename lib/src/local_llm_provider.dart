@@ -20,6 +20,7 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
   ///   systemPrompt: 'You are helpful.',
   /// );
   /// final provider = LocalLlmProvider(llm);
+  /// provider.dispose();
   /// ```
   LocalLlmProvider(FlutterLocalLlm llm) : _llm = llm {
     // Load existing chat history from active chat
@@ -31,7 +32,7 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     final activeChat = _llm.activeChat;
 
     // Convert llama messages to ChatMessages
-    for (final message in activeChat.messages) {
+    for (final message in activeChat.fullHistory) {
       // Skip system messages
       if (message.role == Role.system) continue;
 

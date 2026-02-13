@@ -32,7 +32,6 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
       final provider = LocalLlmProvider(
         await FlutterLocalLlm.init(
           model: LLMModel.gemma3_4b_q5_mm,
-          contextSize: 2048,
           systemPrompt: 'You are a helpful, concise assistant.',
           onDownloadProgress: (progress) {
             setState(() {
