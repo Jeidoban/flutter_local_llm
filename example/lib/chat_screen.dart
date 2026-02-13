@@ -48,11 +48,11 @@ class _ChatScreenState extends State<ChatScreen> {
         model: LLMModel.gemma3n_E2B_q4,
         systemPrompt:
             'You are a helpful, concise assistant. Keep your answers informative but brief.',
-        onModelDownloadProgress: (progress) {
+        onDownloadProgress: (progress) {
           setState(() {
             _downloadProgress = progress;
             _loadingStatus =
-                'Downloading model: ${(progress * 100).toStringAsFixed(1)}%';
+                'Downloading: ${(progress * 100).toStringAsFixed(1)}%';
           });
           print(
             'DEBUG: Download progress: ${(progress * 100).toStringAsFixed(1)}%',

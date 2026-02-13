@@ -17,8 +17,7 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
   LocalLlmProvider? _provider;
   bool _isLoading = true;
   String _loadingStatus = 'Initializing...';
-  double _modelDownloadProgress = 0.0;
-  double _imageModelDownloadProgress = 0.0;
+  double _downloadProgress = 0.0;
 
   @override
   void initState() {
@@ -30,26 +29,19 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
     try {
       setState(() => _loadingStatus = 'Loading model...');
 
-      final llm = await FlutterLocalLlm.init(
-        model: LLMModel.gemma3_4b_q5_mm,
-        systemPrompt: 'You are a helpful, concise assistant.',
-        onModelDownloadProgress: (progress) {
-          setState(() {
-            _modelDownloadProgress = progress;
-            _loadingStatus =
-                'Downloading model: ${(progress * 100).toStringAsFixed(1)}%';
-          });
-        },
-        onImageModelDownloadProgress: (progress) {
-          setState(() {
-            _imageModelDownloadProgress = progress;
-            _loadingStatus =
-                'Downloading image model: ${(progress * 100).toStringAsFixed(1)}%';
-          });
-        },
+      final provider = LocalLlmProvider(
+        await FlutterLocalLlm.init(
+          model: LLMModel.gemma3_4b_q5_mm,
+          systemPrompt: 'You are a helpful, concise assistant.',
+          onDownloadProgress: (progress) {
+            setState(() {
+              _downloadProgress = progress;
+              _loadingStatus =
+                  'Downloading: ${(progress * 100).toStringAsFixed(1)}%';
+            });
+          },
+        ),
       );
-
-      final provider = LocalLlmProvider(llm: llm);
 
       setState(() {
         _provider = provider;
@@ -97,20 +89,10 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
                   const CircularProgressIndicator(),
                   const SizedBox(height: 16),
                   Text(_loadingStatus),
-                  if (_modelDownloadProgress > 0 && _modelDownloadProgress < 1)
+                  if (_downloadProgress > 0 && _downloadProgress < 1)
                     Padding(
                       padding: const EdgeInsets.all(16),
-                      child: LinearProgressIndicator(
-                        value: _modelDownloadProgress,
-                      ),
-                    ),
-                  if (_imageModelDownloadProgress > 0 &&
-                      _imageModelDownloadProgress < 1)
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: LinearProgressIndicator(
-                        value: _imageModelDownloadProgress,
-                      ),
+                      child: LinearProgressIndicator(value: _downloadProgress),
                     ),
                 ],
               ),

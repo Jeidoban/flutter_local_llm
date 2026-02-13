@@ -11,7 +11,7 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
 
   /// Creates a LocalLlmProvider wrapping a FlutterLocalLlm instance
   /// The FlutterLocalLlm instance must be initialized before passing it here.
-  /// Optionally provide [initialHistory] to restore a previous conversation.
+  /// Automatically loads the current active chat's history.
   ///
   /// Example:
   /// ```dart
@@ -19,23 +19,92 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
   ///   model: LLMModel.gemma3nE2B,
   ///   systemPrompt: 'You are helpful.',
   /// );
-  /// final provider = LocalLlmProvider(llm: llm);
+  /// final provider = LocalLlmProvider(llm);
+  /// provider.dispose();
   /// ```
-  LocalLlmProvider({
-    required FlutterLocalLlm llm,
-    Iterable<ChatMessage>? initialHistory,
-  }) : _llm = llm {
-    if (initialHistory != null) {
-      _chatHistory.addAll(initialHistory);
+  LocalLlmProvider(FlutterLocalLlm llm) : _llm = llm {
+    // Load existing chat history from active chat
+    _loadHistoryFromActiveChat();
+  }
+
+  /// Load the active chat's history into the provider
+  void _loadHistoryFromActiveChat() {
+    final activeChat = _llm.activeChat;
+
+    // Convert llama messages to ChatMessages
+    for (final message in activeChat.fullHistory) {
+      // Skip system messages
+      if (message.role == Role.system) continue;
+
+      if (message.role == Role.user) {
+        // Load attachments from image paths
+        final attachments = <Attachment>[];
+        if (message.images.isNotEmpty) {
+          for (final imagePath in message.images) {
+            final file = File(imagePath);
+            if (file.existsSync()) {
+              final bytes = file.readAsBytesSync();
+              final name = file.uri.pathSegments.last;
+              // Determine MIME type from file extension
+              final mimeType = _getMimeType(name);
+              attachments.add(
+                ImageFileAttachment(
+                  name: name,
+                  bytes: bytes,
+                  mimeType: mimeType,
+                ),
+              );
+            }
+          }
+        }
+        _chatHistory.add(ChatMessage.user(message.content, attachments));
+      } else {
+        final llmMessage = ChatMessage.llm();
+        llmMessage.append(message.content);
+        _chatHistory.add(llmMessage);
+      }
     }
   }
+
+  /// Reload history from the currently active chat
+  /// Useful after switching chats in the underlying FlutterLocalLlm
+  void reloadHistory() {
+    _chatHistory.clear();
+    _loadHistoryFromActiveChat();
+    notifyListeners();
+  }
+
+  /// Determine MIME type from file extension
+  String _getMimeType(String filename) {
+    final ext = filename.toLowerCase().split('.').last;
+    switch (ext) {
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'gif':
+        return 'image/gif';
+      case 'webp':
+        return 'image/webp';
+      case 'bmp':
+        return 'image/bmp';
+      default:
+        return 'image/jpeg'; // Default to JPEG
+    }
+  }
+
   @override
   Stream<String> generateStream(
     String prompt, {
     Iterable<Attachment> attachments = const [],
   }) async* {
     final attachmentFiles = await _extractAttachmentFiles(attachments);
-    yield* _llm.sendMessage(prompt, addToHistory: false, images: attachmentFiles);
+    yield* _llm.sendMessage(
+      prompt,
+      addToHistory: false,
+      images: attachmentFiles,
+    );
   }
 
   @override
@@ -93,11 +162,10 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     _chatHistory.clear();
     _chatHistory.addAll(messages);
 
-    // Sync to underlying LLM
-    _syncHistoryToLlm();
-
-    // Notify listeners
-    notifyListeners();
+    // Sync to underlying LLM and notify listeners
+    _syncHistoryToLlm().then((_) {
+      notifyListeners();
+    });
   }
 
   /// Convert a flutter_ai_toolkit ChatMessage to llama_cpp_dart Message
@@ -108,17 +176,25 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
 
   /// Extract attachment files from attachments for multimodal input
   /// Writes attachment bytes to temporary files and returns the file list
-  Future<List<File>?> _extractAttachmentFiles(Iterable<Attachment> attachments) async {
+  Future<List<File>?> _extractAttachmentFiles(
+    Iterable<Attachment> attachments,
+  ) async {
     final attachmentFiles = <File>[];
 
     for (final attachment in attachments) {
-      if (attachment is FileAttachment) {
+      if (attachment is ImageFileAttachment) {
         // Create temp file from bytes
         final tempDir = Directory.systemTemp;
         final timestamp = DateTime.now().millisecondsSinceEpoch;
-        final tempFile = File('${tempDir.path}/flutter_local_llm_${timestamp}_${attachment.name}');
+        final tempFile = File(
+          '${tempDir.path}/flutter_local_llm_${timestamp}_${attachment.name}',
+        );
         await tempFile.writeAsBytes(attachment.bytes);
         attachmentFiles.add(tempFile);
+      } else {
+        throw UnsupportedError(
+          'Unsupported attachment type: ${attachment.name}. Only images are supported.',
+        );
       }
     }
 
@@ -126,22 +202,29 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
   }
 
   /// Sync internal ChatMessage history to FlutterLocalLlm
-  void _syncHistoryToLlm() {
+  Future<void> _syncHistoryToLlm() async {
     // Clear and rebuild
-    _llm.clearHistory();
+    await _llm.clearHistory();
 
-    // Manually re-add system prompt since clearHistory creates a fresh ChatHistory
-    if (_llm.config.systemPrompt != null) {
-      _llm.chatHistory.addMessage(
-        role: Role.system,
-        content: _llm.config.systemPrompt!,
-      );
-    }
+    // Get the active chat (clearHistory ensures one exists)
+    final currentChat = _llm.activeChat;
 
     // Add all chat messages
     for (final chatMsg in _chatHistory) {
       final message = _chatToMessage(chatMsg);
-      _llm.chatHistory.addMessage(role: message.role, content: message.content);
+
+      // Extract attachments if present
+      List<String>? imagePaths;
+      if (chatMsg.attachments.isNotEmpty) {
+        final files = await _extractAttachmentFiles(chatMsg.attachments);
+        imagePaths = files?.map((file) => file.path).toList();
+      }
+
+      currentChat.addMessage(
+        role: message.role,
+        content: message.content,
+        images: imagePaths,
+      );
     }
   }
 

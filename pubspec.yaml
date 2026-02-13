@@ -54,9 +54,9 @@ flutter:
         pluginClass: FlutterLocalLlmPlugin
       windows:
         pluginClass: FlutterLocalLlmPluginCApi
-      web:
-        pluginClass: FlutterLocalLlmWeb
-        fileName: flutter_local_llm_web.dart
+      # web:
+      #   pluginClass: FlutterLocalLlmWeb
+      #   fileName: flutter_local_llm_web.dart
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:
