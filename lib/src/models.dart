@@ -50,13 +50,11 @@ extension LLMModelExtension on LLMModel {
   String? get imageFileName {
     switch (this) {
       case LLMModel.gemma3n_E2B_q4:
-        return null;
-      case LLMModel.gemma3_4b_q5_mm:
-        return '$name-mmproj-F16.gguf';
-      case LLMModel.gemma3_4b_q3_mm:
-        return '$name-mmproj-F16.gguf';
       case LLMModel.gemma3_1b_q5:
         return null;
+      case LLMModel.gemma3_4b_q5_mm:
+      case LLMModel.gemma3_4b_q3_mm:
+        return '$name-mmproj-F16.gguf';
     }
   }
 

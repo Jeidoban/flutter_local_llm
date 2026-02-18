@@ -1,13 +1,12 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_local_llm/src/llm_chat_history.dart';
-import 'package:http/http.dart' as http;
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
-import 'package:path/path.dart' as path;
-import 'package:path_provider/path_provider.dart';
 import 'models.dart';
 import 'llm_isolate.dart';
+import 'model_manager.dart';
+import 'chat_storage.dart';
+import 'isolate_manager.dart';
 
 /// Main class for running local LLMs on device with automatic model downloading
 /// and context management.
@@ -22,6 +21,7 @@ import 'llm_isolate.dart';
 class FlutterLocalLlm {
   final LLMIsolate _isolate;
   final LLMConfig _config;
+  final ChatStorage _chatStorage;
   final int keepRecentPairs;
   int _nextRequestId = 0;
 
@@ -49,16 +49,18 @@ class FlutterLocalLlm {
   /// Get the index of the currently active chat
   int? get activeChatIndex => _activeChatIndex;
 
-  // Private constructor
+  // Private constructor - accepts all dependencies
   FlutterLocalLlm._({
     required LLMIsolate isolate,
     required LLMConfig config,
+    required ChatStorage chatStorage,
     required this.keepRecentPairs,
   }) : _isolate = isolate,
-       _config = config;
+       _config = config,
+       _chatStorage = chatStorage;
 
-  /// Initialize FlutterLocalLlm with a model
-  static Future<FlutterLocalLlm> init({
+  /// Simple factory with defaults - zero config option
+  static Future<FlutterLocalLlm> create({
     LLMModel model = LLMModel.gemma3_1b_q5,
     String? systemPrompt,
     String? customModelUrl,
@@ -74,18 +76,12 @@ class FlutterLocalLlm {
     double topP = 0.95,
     double minP = 0.05,
     double penaltyRepeat = 1.1,
-  }) async {
-    // Migrate old model directory if it exists
-    await _migrateOldModels();
-
+    // Path customization
+    String? modelsPath,
+    String? chatStoragePath,
+  }) {
     // Default batch size to context size if not specified
     final batchSize = nBatch ?? contextSize;
-
-    // Calculate keepRecentPairs based on context size if not provided
-    // 4096: 2 pairs, 8096: 4 pairs, 16384: 8 pairs, etc.
-    final effectiveKeepRecentPairs =
-        messagePairsToKeepWhenClearingContext ??
-        (contextSize / 2048).round().clamp(1, 10);
 
     // Build system prompt with context size guidance if not provided
     final effectiveSystemPrompt =
@@ -112,190 +108,105 @@ class FlutterLocalLlm {
       penaltyRepeat: penaltyRepeat,
     );
 
-    // Check if we need to download image model for combined progress
+    // Create dependencies
+    // For multimodal models, we need to weight progress across two downloads
+    // ModelManager will be called twice, so we track which download we're on
     final hasImageModel =
         config.imageDownloadUrl != null && config.imageFileName != null;
+    int downloadCount = 0;
 
-    // Download model with weighted progress (0-50% or 0-100%)
-    final modelPath = await _getModelPath(config.downloadUrl, config.fileName, (
-      progress,
-    ) {
-      final weightedProgress = hasImageModel ? progress * 0.5 : progress;
-      onDownloadProgress?.call(weightedProgress);
-    });
+    final modelManager = ModelManager(
+      modelsPath: modelsPath,
+      onDownloadProgress: onDownloadProgress == null
+          ? null
+          : (progress) {
+              if (hasImageModel) {
+                // First download (text model): 0-50%
+                // Second download (image model): 50-100%
+                final weightedProgress = downloadCount == 0
+                    ? progress * 0.5
+                    : 0.5 + (progress * 0.5);
+                onDownloadProgress(weightedProgress);
+                if (progress >= 1.0) downloadCount++;
+              } else {
+                // Single download: 0-100%
+                onDownloadProgress(progress);
+              }
+            },
+    );
 
-    // Download image model if needed (50-100%)
+    // Call createWithDependencies
+    return createWithDependencies(
+      config: config,
+      modelManager: modelManager,
+      chatStorage: ChatStorage(storagePath: chatStoragePath),
+      isolateManager: IsolateManager(),
+    );
+  }
+
+  /// Factory with full dependency injection
+  ///
+  /// Accepts injectable dependencies for testing or custom implementations.
+  /// Power users can subclass ModelManager, ChatStorage, or IsolateManager
+  /// and pass custom implementations here.
+  static Future<FlutterLocalLlm> createWithDependencies({
+    required LLMConfig config,
+    required ModelManager modelManager,
+    required ChatStorage chatStorage,
+    required IsolateManager isolateManager,
+  }) async {
+    // Calculate keepRecentPairs based on context size
+    final keepRecentPairs = (config.contextSize / 2048).round().clamp(1, 10);
+
+    // Download models using injected ModelManager
+    final modelPath = await modelManager.getModelPath(
+      config.downloadUrl,
+      config.fileName,
+    );
+
     String? imageModelPath;
-    if (hasImageModel) {
-      imageModelPath = await _getModelPath(
+    if (config.imageDownloadUrl != null && config.imageFileName != null) {
+      imageModelPath = await modelManager.getModelPath(
         config.imageDownloadUrl!,
         config.imageFileName!,
-        (progress) {
-          final weightedProgress = 0.5 + (progress * 0.5);
-          onDownloadProgress?.call(weightedProgress);
-        },
       );
     }
 
-    // Spawn isolate and initialize
-    final isolate = await LLMIsolate.spawn(
+    // Create isolate using injected IsolateManager
+    final isolate = await isolateManager.createIsolate(
       modelPath,
       config,
       imageModelPath: imageModelPath,
     );
 
+    // Create instance
     final instance = FlutterLocalLlm._(
       isolate: isolate,
       config: config,
-      keepRecentPairs: effectiveKeepRecentPairs,
+      chatStorage: chatStorage,
+      keepRecentPairs: keepRecentPairs,
     );
 
     // Load chats from storage
-    await instance._loadChatsFromJson();
+    await instance._loadChatsFromStorage();
 
     return instance;
   }
 
-  /// Get the models directory, creating it if it doesn't exist
-  static Future<Directory> _getModelsDirectory() async {
-    final documentsDir = await getApplicationDocumentsDirectory();
-    final modelsDir = Directory(
-      path.join(documentsDir.path, 'flutter_local_llm', 'models'),
+  /// Load chats from storage using injected ChatStorage
+  Future<void> _loadChatsFromStorage() async {
+    final data = await _chatStorage.loadChats();
+    if (data != null) {
+      _activeChatIndex = data.activeChatIndex;
+      _chatHistories = data.chats;
+    }
+  }
+
+  /// Save all chats to storage using injected ChatStorage
+  Future<void> _saveChatsToStorage() async {
+    await _chatStorage.saveChats(
+      ChatStorageData(activeChatIndex: _activeChatIndex, chats: _chatHistories),
     );
-
-    if (!modelsDir.existsSync()) {
-      modelsDir.createSync(recursive: true);
-    }
-
-    return modelsDir;
-  }
-
-  /// Get the data directory, creating it if it doesn't exist
-  static Future<Directory> _getDataDirectory() async {
-    final documentsDir = await getApplicationDocumentsDirectory();
-    final dataDir = Directory(
-      path.join(documentsDir.path, 'flutter_local_llm', 'data'),
-    );
-
-    if (!dataDir.existsSync()) {
-      dataDir.createSync(recursive: true);
-    }
-
-    return dataDir;
-  }
-
-  /// Migrate models from old directory structure to new structure
-  static Future<void> _migrateOldModels() async {
-    final documentsDir = await getApplicationDocumentsDirectory();
-    final oldDir = Directory(
-      path.join(documentsDir.path, 'flutter_local_llm_models'),
-    );
-
-    if (oldDir.existsSync()) {
-      final newDir = await _getModelsDirectory();
-
-      // Move files from old to new
-      await for (final entity in oldDir.list()) {
-        if (entity is File) {
-          final newPath = path.join(newDir.path, path.basename(entity.path));
-          await entity.copy(newPath);
-        }
-      }
-
-      // Delete old directory
-      await oldDir.delete(recursive: true);
-    }
-  }
-
-  /// Get the chat storage file
-  Future<File> _getChatStorageFile() async {
-    final dataDir = await _getDataDirectory();
-    return File(path.join(dataDir.path, 'chats.json'));
-  }
-
-  /// Save all chats to JSON file
-  Future<void> _saveChatsToJson() async {
-    final file = await _getChatStorageFile();
-    final data = {
-      'activeChatIndex': _activeChatIndex,
-      'chats': _chatHistories.map((chat) => chat.toJson()).toList(),
-    };
-
-    final jsonString = const JsonEncoder.withIndent('  ').convert(data);
-    await file.writeAsString(jsonString);
-  }
-
-  /// Load chats from JSON file
-  Future<void> _loadChatsFromJson() async {
-    final file = await _getChatStorageFile();
-
-    if (!file.existsSync()) {
-      return;
-    }
-
-    try {
-      final jsonString = await file.readAsString();
-      final data = jsonDecode(jsonString) as Map<String, dynamic>;
-
-      _activeChatIndex = data['activeChatIndex'] as int?;
-      final chatsJson = data['chats'] as List<dynamic>?;
-
-      if (chatsJson != null) {
-        _chatHistories = chatsJson
-            .map(
-              (json) => LlmChatHistory.fromJson(json as Map<String, dynamic>),
-            )
-            .toList();
-      }
-    } catch (e) {
-      // If loading fails, just start fresh
-      _chatHistories = [];
-      _activeChatIndex = null;
-    }
-  }
-
-  /// Download a model file from a URL
-  static Future<void> _downloadModel(
-    String url,
-    String destinationPath,
-    void Function(double progress)? onProgress,
-  ) async {
-    final request = await http.Client().send(
-      http.Request('GET', Uri.parse(url)),
-    );
-    final totalBytes = request.contentLength ?? 0;
-    int downloadedBytes = 0;
-
-    final file = File(destinationPath);
-    final sink = file.openWrite();
-
-    await for (final chunk in request.stream) {
-      sink.add(chunk);
-      downloadedBytes += chunk.length;
-
-      if (onProgress != null && totalBytes > 0) {
-        final progress = downloadedBytes / totalBytes;
-        onProgress(progress);
-      }
-    }
-
-    await sink.close();
-  }
-
-  /// Get the full path to a model file, downloading it if necessary
-  static Future<String> _getModelPath(
-    String downloadUrl,
-    String fileName,
-    void Function(double progress)? onDownloadProgress,
-  ) async {
-    final modelsDir = await _getModelsDirectory();
-    final modelFilePath = path.join(modelsDir.path, fileName);
-
-    if (!File(modelFilePath).existsSync()) {
-      await _downloadModel(downloadUrl, modelFilePath, onDownloadProgress);
-    }
-
-    return modelFilePath;
   }
 
   /// Internal helper to generate from a prompt
@@ -356,7 +267,7 @@ class FlutterLocalLlm {
     _isolate.sendCommand(ClearContextCommand());
 
     // Save to storage
-    await _saveChatsToJson();
+    await _saveChatsToStorage();
   }
 
   /// Start a new chat session
@@ -417,7 +328,7 @@ class FlutterLocalLlm {
       }
     }
 
-    await _saveChatsToJson();
+    await _saveChatsToStorage();
   }
 
   /// Delete all chats
@@ -430,10 +341,7 @@ class FlutterLocalLlm {
 
     _isolate.sendCommand(ClearContextCommand());
 
-    final file = await _getChatStorageFile();
-    if (file.existsSync()) {
-      await file.delete();
-    }
+    await _chatStorage.deleteStorage();
   }
 
   /// Save all chats to storage
@@ -444,7 +352,7 @@ class FlutterLocalLlm {
     for (final chat in _chatHistories) {
       chat.updatedAt = DateTime.now();
     }
-    await _saveChatsToJson();
+    await _saveChatsToStorage();
   }
 
   /// Send a message and get streaming tokens
@@ -603,7 +511,7 @@ class FlutterLocalLlm {
 
       // Update timestamp and save
       activeChat.updatedAt = DateTime.now();
-      await _saveChatsToJson();
+      await _saveChatsToStorage();
     }
   }
 
