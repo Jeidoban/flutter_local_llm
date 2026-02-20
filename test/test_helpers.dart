@@ -15,7 +15,7 @@ class MockLLMIsolate extends Mock implements LLMIsolate {}
 
 /// Register fallback values for mocktail
 void registerMocktailFallbacks() {
-  registerFallbackValue(ChatStorageData(chats: []));
+  registerFallbackValue((activeChatIndex: null, chats: <LlmChatHistory>[]));  // ChatStorageRecord fallback
   registerFallbackValue(LLMModel.gemma3_1b_q5);
   registerFallbackValue(
     LLMConfig(

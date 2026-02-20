@@ -19,9 +19,10 @@ import 'isolate_manager.dart';
 /// llm.dispose();
 /// ```
 class FlutterLocalLlm {
-  final LLMIsolate _isolate;
-  final LLMConfig _config;
-  final ChatStorage _chatStorage;
+  final LLMIsolate isolate;
+  final LLMConfig config;
+  final ChatStorage chatStorage;
+  final ModelManager modelManager;
   final int keepRecentPairs;
   int _nextRequestId = 0;
 
@@ -30,9 +31,6 @@ class FlutterLocalLlm {
 
   // Index of the currently active chat
   int? _activeChatIndex;
-
-  // Get the current LLM configuration
-  LLMConfig get config => _config;
 
   // Get all chats
   List<LlmChatHistory> get chats => _chatHistories;
@@ -51,13 +49,12 @@ class FlutterLocalLlm {
 
   // Private constructor - accepts all dependencies
   FlutterLocalLlm._({
-    required LLMIsolate isolate,
-    required LLMConfig config,
-    required ChatStorage chatStorage,
+    required this.isolate,
+    required this.config,
+    required this.chatStorage,
+    required this.modelManager,
     required this.keepRecentPairs,
-  }) : _isolate = isolate,
-       _config = config,
-       _chatStorage = chatStorage;
+  });
 
   /// Simple factory with defaults - zero config option
   static Future<FlutterLocalLlm> create({
@@ -108,9 +105,7 @@ class FlutterLocalLlm {
       penaltyRepeat: penaltyRepeat,
     );
 
-    // Create dependencies
-    // For multimodal models, we need to weight progress across two downloads
-    // ModelManager will be called twice, so we track which download we're on
+    // For multimodal models, weight progress: text model 0-50%, image model 50-100%
     final hasImageModel =
         config.imageDownloadUrl != null && config.imageFileName != null;
     int downloadCount = 0;
@@ -120,22 +115,14 @@ class FlutterLocalLlm {
       onDownloadProgress: onDownloadProgress == null
           ? null
           : (progress) {
-              if (hasImageModel) {
-                // First download (text model): 0-50%
-                // Second download (image model): 50-100%
-                final weightedProgress = downloadCount == 0
-                    ? progress * 0.5
-                    : 0.5 + (progress * 0.5);
-                onDownloadProgress(weightedProgress);
-                if (progress >= 1.0) downloadCount++;
-              } else {
-                // Single download: 0-100%
-                onDownloadProgress(progress);
-              }
+              final weighted = hasImageModel
+                  ? (downloadCount == 0 ? progress * 0.5 : 0.5 + progress * 0.5)
+                  : progress;
+              onDownloadProgress(weighted);
+              if (progress >= 1.0) downloadCount++;
             },
     );
 
-    // Call createWithDependencies
     return createWithDependencies(
       config: config,
       modelManager: modelManager,
@@ -159,16 +146,19 @@ class FlutterLocalLlm {
     final keepRecentPairs = (config.contextSize / 2048).round().clamp(1, 10);
 
     // Download models using injected ModelManager
+    final hasImageModel =
+        config.imageDownloadUrl != null && config.imageFileName != null;
+
     final modelPath = await modelManager.getModelPath(
-      config.downloadUrl,
       config.fileName,
+      downloadUrl: config.downloadUrl,
     );
 
     String? imageModelPath;
-    if (config.imageDownloadUrl != null && config.imageFileName != null) {
+    if (hasImageModel) {
       imageModelPath = await modelManager.getModelPath(
-        config.imageDownloadUrl!,
         config.imageFileName!,
+        downloadUrl: config.imageDownloadUrl!,
       );
     }
 
@@ -184,6 +174,7 @@ class FlutterLocalLlm {
       isolate: isolate,
       config: config,
       chatStorage: chatStorage,
+      modelManager: modelManager,
       keepRecentPairs: keepRecentPairs,
     );
 
@@ -195,7 +186,7 @@ class FlutterLocalLlm {
 
   /// Load chats from storage using injected ChatStorage
   Future<void> _loadChatsFromStorage() async {
-    final data = await _chatStorage.loadChats();
+    final data = await chatStorage.loadChats();
     if (data != null) {
       _activeChatIndex = data.activeChatIndex;
       _chatHistories = data.chats;
@@ -204,8 +195,8 @@ class FlutterLocalLlm {
 
   /// Save all chats to storage using injected ChatStorage
   Future<void> _saveChatsToStorage() async {
-    await _chatStorage.saveChats(
-      ChatStorageData(activeChatIndex: _activeChatIndex, chats: _chatHistories),
+    await chatStorage.saveChats(
+      (activeChatIndex: _activeChatIndex, chats: _chatHistories),
     );
   }
 
@@ -217,7 +208,7 @@ class FlutterLocalLlm {
     final requestId = _nextRequestId++;
 
     // Send command to isolate
-    _isolate.sendCommand(
+    isolate.sendCommand(
       GenerateFromPromptCommand(
         prompt: prompt,
         requestId: requestId,
@@ -226,7 +217,7 @@ class FlutterLocalLlm {
     );
 
     // Listen for tokens
-    await for (final response in _isolate.responseStream) {
+    await for (final response in isolate.responseStream) {
       if (response is TokenResponse && response.requestId == requestId) {
         yield response.token;
       } else if (response is CompletionResponse &&
@@ -241,10 +232,10 @@ class FlutterLocalLlm {
   /// Get remaining context space from the isolate
   Future<int> getRemainingContextSpace() async {
     final requestId = _nextRequestId++;
-    _isolate.sendCommand(GetRemainingContextCommand(requestId: requestId));
+    isolate.sendCommand(GetRemainingContextCommand(requestId: requestId));
 
     // Wait for response
-    await for (final response in _isolate.responseStream) {
+    await for (final response in isolate.responseStream) {
       if (response is RemainingContextResponse &&
           response.requestId == requestId) {
         return response.remaining;
@@ -260,11 +251,11 @@ class FlutterLocalLlm {
     activeChat.messages.clear();
     activeChat.fullHistory.clear();
 
-    if (_config.systemPrompt != null && _config.systemPrompt!.isNotEmpty) {
-      activeChat.addMessage(role: Role.system, content: _config.systemPrompt!);
+    if (config.systemPrompt != null && config.systemPrompt!.isNotEmpty) {
+      activeChat.addMessage(role: Role.system, content: config.systemPrompt!);
     }
 
-    _isolate.sendCommand(ClearContextCommand());
+    isolate.sendCommand(ClearContextCommand());
 
     // Save to storage
     await _saveChatsToStorage();
@@ -283,8 +274,8 @@ class FlutterLocalLlm {
     );
 
     // Add system prompt if configured
-    if (_config.systemPrompt != null && _config.systemPrompt!.isNotEmpty) {
-      newChat.addMessage(role: Role.system, content: _config.systemPrompt!);
+    if (config.systemPrompt != null && config.systemPrompt!.isNotEmpty) {
+      newChat.addMessage(role: Role.system, content: config.systemPrompt!);
     }
 
     _chatHistories.add(newChat);
@@ -302,7 +293,7 @@ class FlutterLocalLlm {
     }
 
     _activeChatIndex = index;
-    _isolate.sendCommand(ClearContextCommand());
+    isolate.sendCommand(ClearContextCommand());
   }
 
   /// Delete a chat by index
@@ -322,7 +313,7 @@ class FlutterLocalLlm {
       // Adjust active index if needed
       if (_activeChatIndex == index) {
         _activeChatIndex = 0;
-        _isolate.sendCommand(ClearContextCommand());
+        isolate.sendCommand(ClearContextCommand());
       } else if (_activeChatIndex != null && _activeChatIndex! > index) {
         _activeChatIndex = _activeChatIndex! - 1;
       }
@@ -339,9 +330,9 @@ class FlutterLocalLlm {
     _chatHistories.clear();
     _activeChatIndex = null;
 
-    _isolate.sendCommand(ClearContextCommand());
+    isolate.sendCommand(ClearContextCommand());
 
-    await _chatStorage.deleteStorage();
+    await chatStorage.deleteStorage();
   }
 
   /// Save all chats to storage
@@ -407,12 +398,12 @@ class FlutterLocalLlm {
     final tempMessages = LlmChatHistory();
     int remainingSpace = await getRemainingContextSpace();
     String newPrompt = messages.exportFormat(
-      _config.chatFormat,
+      config.chatFormat,
       leaveLastAssistantOpen: true,
     );
 
     // Check if context is empty (just cleared or first message)
-    final contextIsEmpty = remainingSpace >= _config.contextSize - 100;
+    final contextIsEmpty = remainingSpace >= config.contextSize - 100;
 
     // Count images in new messages for token estimation
     final newMessageImageCount = messages.messages
@@ -425,7 +416,7 @@ class FlutterLocalLlm {
         activeChat.shouldTrimBeforePromptNoLlama(
           newPrompt,
           remainingSpace,
-          _config.contextSize,
+          config.contextSize,
           imageCount: newMessageImageCount,
         );
 
@@ -435,7 +426,7 @@ class FlutterLocalLlm {
       testMessages.messages.addAll(activeChat.messages);
       testMessages.messages.addAll(messages.messages);
       final fullPrompt = testMessages.exportFormat(
-        _config.chatFormat,
+        config.chatFormat,
         leaveLastAssistantOpen: true,
       );
 
@@ -448,14 +439,14 @@ class FlutterLocalLlm {
       if (activeChat.shouldTrimBeforePromptNoLlama(
         fullPrompt,
         remainingSpace,
-        _config.contextSize,
+        config.contextSize,
         imageCount: totalImageCount,
       )) {
         activeChat.autoTrimForSpaceNoLlama(keepRecentPairs: keepRecentPairs);
       }
 
       // Clear context and add (possibly trimmed) history
-      _isolate.sendCommand(ClearContextCommand());
+      isolate.sendCommand(ClearContextCommand());
       tempMessages.messages.addAll(activeChat.messages);
     }
 
@@ -466,7 +457,7 @@ class FlutterLocalLlm {
         .toList();
 
     final promptToSend = tempMessages.exportFormat(
-      _config.chatFormat,
+      config.chatFormat,
       leaveLastAssistantOpen: true,
     );
 
@@ -533,6 +524,6 @@ class FlutterLocalLlm {
 
   /// Clean up resources
   void dispose() {
-    _isolate.dispose();
+    isolate.dispose();
   }
 }

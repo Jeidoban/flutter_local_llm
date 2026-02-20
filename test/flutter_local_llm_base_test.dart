@@ -41,7 +41,10 @@ void main() {
 
       // Default stubs
       when(
-        () => mockModelManager.getModelPath(any(), any()),
+        () => mockModelManager.getModelPath(
+          any(),
+          downloadUrl: any(named: 'downloadUrl'),
+        ),
       ).thenAnswer((_) async => '/fake/model.gguf');
 
       when(
@@ -90,7 +93,7 @@ void main() {
       );
 
       expect(llm, isNotNull);
-      verify(() => mockModelManager.getModelPath(any(), any())).called(1);
+      verify(() => mockModelManager.getModelPath(any(), downloadUrl: any(named: 'downloadUrl'))).called(1);
       verify(
         () => mockIsolateManager.createIsolate(
           any(),
@@ -198,7 +201,7 @@ void main() {
       ];
 
       when(() => mockChatStorage.loadChats()).thenAnswer(
-        (_) async => ChatStorageData(activeChatIndex: 0, chats: existingChats),
+        (_) async => (activeChatIndex: 0, chats: existingChats),
       );
 
       final llm = await FlutterLocalLlm.createWithDependencies(
@@ -239,7 +242,7 @@ void main() {
       ];
 
       when(() => mockChatStorage.loadChats()).thenAnswer(
-        (_) async => ChatStorageData(activeChatIndex: 0, chats: existingChats),
+        (_) async => (activeChatIndex: 0, chats: existingChats),
       );
 
       final llm = await FlutterLocalLlm.createWithDependencies(
@@ -287,7 +290,7 @@ void main() {
       ];
 
       when(() => mockChatStorage.loadChats()).thenAnswer(
-        (_) async => ChatStorageData(activeChatIndex: 1, chats: existingChats),
+        (_) async => (activeChatIndex: 1, chats: existingChats),
       );
 
       final llm = await FlutterLocalLlm.createWithDependencies(
@@ -369,7 +372,7 @@ void main() {
       );
 
       // Should download both text and image models (2 calls to getModelPath)
-      verify(() => mockModelManager.getModelPath(any(), any())).called(2);
+      verify(() => mockModelManager.getModelPath(any(), downloadUrl: any(named: 'downloadUrl'))).called(2);
     });
   });
 }

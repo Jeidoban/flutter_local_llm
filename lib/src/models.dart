@@ -72,6 +72,7 @@ extension LLMModelExtension on LLMModel {
 /// Configuration for LLM initialization
 class LLMConfig {
   final LLMModel model;
+  final String? customModelName;
   final String? customModelUrl;
   final String? customImageModelUrl;
   final String? systemPrompt;
@@ -88,6 +89,7 @@ class LLMConfig {
 
   LLMConfig({
     this.model = LLMModel.gemma3_4b_q5_mm,
+    this.customModelName,
     this.customModelUrl,
     this.customImageModelUrl,
     this.systemPrompt,
@@ -105,9 +107,8 @@ class LLMConfig {
 
   String get downloadUrl => customModelUrl ?? model.url;
   String get fileName {
-    if (customModelUrl != null) {
-      return Uri.parse(customModelUrl!).pathSegments.last;
-    }
+    if (customModelName != null) return '$customModelName.gguf';
+    if (customModelUrl != null) return Uri.parse(customModelUrl!).pathSegments.last;
     return model.fileName;
   }
 

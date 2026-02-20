@@ -4,6 +4,8 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'llm_chat_history.dart';
 
+typedef ChatStorageData = ({int? activeChatIndex, List<LlmChatHistory> chats});
+
 /// Manages chat persistence
 class ChatStorage {
   final String? storagePath;
@@ -50,7 +52,7 @@ class ChatStorage {
             .toList();
       }
 
-      return ChatStorageData(activeChatIndex: activeChatIndex, chats: chats);
+      return (activeChatIndex: activeChatIndex, chats: chats);
     } catch (e) {
       return null;
     }
@@ -75,12 +77,4 @@ class ChatStorage {
       await file.delete();
     }
   }
-}
-
-/// Data structure for chat persistence
-class ChatStorageData {
-  final int? activeChatIndex;
-  final List<LlmChatHistory> chats;
-
-  ChatStorageData({this.activeChatIndex, required this.chats});
 }
