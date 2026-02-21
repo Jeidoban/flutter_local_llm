@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_ai_toolkit/flutter_ai_toolkit.dart';
 import 'package:flutter_local_llm/flutter_local_llm.dart';
@@ -31,7 +33,7 @@ class _AiToolkitChatScreenState extends State<AiToolkitChatScreen> {
 
       final provider = LocalLlmProvider(
         await FlutterLocalLlm.create(
-          model: LLMModel.gemma3_4b_q5_mm,
+          model: LlmModel.gemma3_4b_q5_mm,
           systemPrompt: 'You are a helpful, concise assistant.',
           onDownloadProgress: (progress) {
             setState(() {

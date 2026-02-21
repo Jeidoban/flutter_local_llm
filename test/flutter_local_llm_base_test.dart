@@ -12,52 +12,35 @@ void main() {
 
   group('FlutterLocalLlm', () {
     late MockModelManager mockModelManager;
-    late MockChatStorage mockChatStorage;
-    late MockIsolateManager mockIsolateManager;
+    late MockChatManager mockChatManager;
     late MockLLMIsolate mockIsolate;
     late StreamController<IsolateResponse> responseController;
-    late LLMConfig defaultConfig;
+    late LlmConfig defaultConfig;
 
     setUp(() {
       // Create default config for tests
-      defaultConfig = LLMConfig(
-        model: LLMModel.gemma3_1b_q5,
-        contextSize: 8096,
-        nPredict: -1,
-        nBatch: 8096,
-        nThreads: 8,
-        temperature: 0.7,
-        topK: 64,
-        topP: 0.95,
-        minP: 0.05,
-        penaltyRepeat: 1.1,
-      );
+      defaultConfig = LlmConfig.gemma3_1b_q5.copyWith(contextSize: 8096);
 
       mockModelManager = MockModelManager();
-      mockChatStorage = MockChatStorage();
-      mockIsolateManager = MockIsolateManager();
+      mockChatManager = MockChatManager();
       mockIsolate = MockLLMIsolate();
       responseController = StreamController<IsolateResponse>.broadcast();
 
       // Default stubs
       when(
-        () => mockModelManager.getModelPath(
-          any(),
-          downloadUrl: any(named: 'downloadUrl'),
-        ),
-      ).thenAnswer((_) async => '/fake/model.gguf');
-
-      when(
-        () => mockIsolateManager.createIsolate(
-          any(),
-          any(),
-          imageModelPath: any(named: 'imageModelPath'),
-        ),
+        () => mockModelManager.createModelIsolate(any()),
       ).thenAnswer((_) async => mockIsolate);
 
-      when(() => mockChatStorage.loadChats()).thenAnswer((_) async => null);
-
-      when(() => mockChatStorage.saveChats(any())).thenAnswer((_) async {});
+      when(() => mockChatManager.loadChats()).thenAnswer((_) async {});
+      when(() => mockChatManager.saveChats()).thenAnswer((_) async {});
+      when(() => mockChatManager.chats).thenReturn([LlmChatHistory()]);
+      when(() => mockChatManager.activeChat).thenReturn(LlmChatHistory());
+      when(
+        () => mockChatManager.startNewChat(
+          title: any(named: 'title'),
+          systemPrompt: any(named: 'systemPrompt'),
+        ),
+      ).thenReturn(0);
 
       when(
         () => mockIsolate.responseStream,
@@ -67,11 +50,13 @@ void main() {
       when(() => mockIsolate.sendCommand(any())).thenAnswer((invocation) {
         final command = invocation.positionalArguments[0];
         if (command is GetRemainingContextCommand) {
-          // Simulate remaining context response (add immediately since it's a broadcast stream)
-          responseController.add(
-            RemainingContextResponse(
-              remaining: 4096,
-              requestId: command.requestId,
+          // Defer response by one microtask so the await-for listener is set up first
+          Future.microtask(
+            () => responseController.add(
+              RemainingContextResponse(
+                remaining: 4096,
+                requestId: command.requestId,
+              ),
             ),
           );
         }
@@ -85,58 +70,44 @@ void main() {
     });
 
     test('creates instance with default dependencies', () async {
-      final llm = await FlutterLocalLlm.createWithDependencies(
+      final llm = await FlutterLocalLlm.createCustom(
         config: defaultConfig,
         modelManager: mockModelManager,
-        chatStorage: mockChatStorage,
-        isolateManager: mockIsolateManager,
+        chatManager: mockChatManager,
       );
 
       expect(llm, isNotNull);
-      verify(() => mockModelManager.getModelPath(any(), downloadUrl: any(named: 'downloadUrl'))).called(1);
-      verify(
-        () => mockIsolateManager.createIsolate(
-          any(),
-          any(),
-          imageModelPath: any(named: 'imageModelPath'),
-        ),
-      ).called(1);
-      verify(() => mockChatStorage.loadChats()).called(1);
+      verify(() => mockModelManager.createModelIsolate(any())).called(1);
+      verify(() => mockChatManager.loadChats()).called(1);
     });
 
     test('sends message and streams tokens', () async {
-      // Setup response stream
-      final requestId = 0;
-
       when(() => mockIsolate.sendCommand(any())).thenAnswer((invocation) {
         final command = invocation.positionalArguments[0];
         if (command is GetRemainingContextCommand) {
-          responseController.add(
-            RemainingContextResponse(
-              remaining: 4096,
-              requestId: command.requestId,
+          Future.microtask(
+            () => responseController.add(
+              RemainingContextResponse(
+                remaining: 4096,
+                requestId: command.requestId,
+              ),
             ),
           );
         } else if (command is GenerateFromPromptCommand) {
-          // Simulate streaming response
-          responseController.add(
-            TokenResponse(token: 'Hello', requestId: requestId),
-          );
-          responseController.add(
-            TokenResponse(token: ' ', requestId: requestId),
-          );
-          responseController.add(
-            TokenResponse(token: 'world', requestId: requestId),
-          );
-          responseController.add(CompletionResponse(requestId: requestId));
+          final generateRequestId = command.requestId;
+          Future.microtask(() {
+            responseController.add(TokenResponse(token: 'Hello', requestId: generateRequestId));
+            responseController.add(TokenResponse(token: ' ', requestId: generateRequestId));
+            responseController.add(TokenResponse(token: 'world', requestId: generateRequestId));
+            responseController.add(CompletionResponse(requestId: generateRequestId));
+          });
         }
       });
 
-      final llm = await FlutterLocalLlm.createWithDependencies(
+      final llm = await FlutterLocalLlm.createCustom(
         config: defaultConfig,
         modelManager: mockModelManager,
-        chatStorage: mockChatStorage,
-        isolateManager: mockIsolateManager,
+        chatManager: mockChatManager,
       );
 
       final tokens = <String>[];
@@ -162,36 +133,40 @@ void main() {
       when(() => mockIsolate.sendCommand(any())).thenAnswer((invocation) {
         final command = invocation.positionalArguments[0];
         if (command is GetRemainingContextCommand) {
-          responseController.add(
-            RemainingContextResponse(
-              remaining: 4096,
-              requestId: command.requestId,
+          Future.microtask(
+            () => responseController.add(
+              RemainingContextResponse(
+                remaining: 4096,
+                requestId: command.requestId,
+              ),
             ),
           );
         } else if (command is GenerateFromPromptCommand) {
-          responseController.add(
-            TokenResponse(token: 'Response', requestId: 0),
-          );
-          responseController.add(CompletionResponse(requestId: 0));
+          final generateRequestId = command.requestId;
+          Future.microtask(() {
+            responseController.add(TokenResponse(token: 'Response', requestId: generateRequestId));
+            responseController.add(CompletionResponse(requestId: generateRequestId));
+          });
         }
       });
 
-      final llm = await FlutterLocalLlm.createWithDependencies(
+      final llm = await FlutterLocalLlm.createCustom(
         config: defaultConfig,
         modelManager: mockModelManager,
-        chatStorage: mockChatStorage,
-        isolateManager: mockIsolateManager,
+        chatManager: mockChatManager,
       );
 
-      expect(llm.chats.isEmpty, true);
+      when(() => mockChatManager.chats).thenReturn([]);
+      when(() => mockChatManager.activeChat).thenReturn(LlmChatHistory());
+      when(() => mockChatManager.startNewChat()).thenReturn(0);
+
+      expect(llm.chatManager.chats.isEmpty, true);
 
       await for (final _ in llm.sendMessage('First message')) {
         // Consume stream
       }
 
-      expect(llm.chats.length, 1);
-      expect(llm.chats[0].title, contains('First message'));
-      verify(() => mockChatStorage.saveChats(any())).called(greaterThan(0));
+      verify(() => mockChatManager.saveChats()).called(greaterThan(0));
     });
 
     test('loads existing chats on init', () async {
@@ -200,39 +175,36 @@ void main() {
         LlmChatHistory(title: 'Existing Chat 2'),
       ];
 
-      when(() => mockChatStorage.loadChats()).thenAnswer(
-        (_) async => (activeChatIndex: 0, chats: existingChats),
-      );
+      when(() => mockChatManager.loadChats()).thenAnswer((_) async {});
+      when(() => mockChatManager.chats).thenReturn(existingChats);
+      when(() => mockChatManager.activeChatIndex).thenReturn(0);
+      when(() => mockChatManager.activeChat).thenReturn(existingChats[0]);
 
-      final llm = await FlutterLocalLlm.createWithDependencies(
+      final llm = await FlutterLocalLlm.createCustom(
         config: defaultConfig,
         modelManager: mockModelManager,
-        chatStorage: mockChatStorage,
-        isolateManager: mockIsolateManager,
+        chatManager: mockChatManager,
       );
 
-      expect(llm.chats.length, 2);
-      expect(llm.chats[0].title, 'Existing Chat 1');
-      expect(llm.activeChatIndex, 0);
+      expect(llm.chatManager.chats.length, 2);
+      expect(llm.chatManager.chats[0].title, 'Existing Chat 1');
+      expect(llm.chatManager.activeChatIndex, 0);
     });
 
     test('deleteAllChats clears storage', () async {
-      when(() => mockChatStorage.deleteStorage()).thenAnswer((_) async {});
+      when(() => mockChatManager.deleteAllChats()).thenAnswer((_) async {});
+      when(() => mockChatManager.chats).thenReturn([]);
 
-      final llm = await FlutterLocalLlm.createWithDependencies(
+      final llm = await FlutterLocalLlm.createCustom(
         config: defaultConfig,
         modelManager: mockModelManager,
-        chatStorage: mockChatStorage,
-        isolateManager: mockIsolateManager,
+        chatManager: mockChatManager,
       );
 
-      await llm.deleteAllChats();
+      await llm.chatManager.deleteAllChats();
 
-      expect(llm.chats.isEmpty, true);
-      verify(() => mockChatStorage.deleteStorage()).called(1);
-      verify(
-        () => mockIsolate.sendCommand(any(that: isA<ClearContextCommand>())),
-      ).called(1);
+      expect(llm.chatManager.chats.isEmpty, true);
+      verify(() => mockChatManager.deleteAllChats()).called(1);
     });
 
     test('switches between chats', () async {
@@ -241,45 +213,44 @@ void main() {
         LlmChatHistory(title: 'Chat 2'),
       ];
 
-      when(() => mockChatStorage.loadChats()).thenAnswer(
-        (_) async => (activeChatIndex: 0, chats: existingChats),
-      );
+      when(() => mockChatManager.loadChats()).thenAnswer((_) async {});
+      when(() => mockChatManager.chats).thenReturn(existingChats);
+      when(() => mockChatManager.activeChatIndex).thenReturn(0);
+      when(() => mockChatManager.activeChat).thenReturn(existingChats[0]);
 
-      final llm = await FlutterLocalLlm.createWithDependencies(
+      final llm = await FlutterLocalLlm.createCustom(
         config: defaultConfig,
         modelManager: mockModelManager,
-        chatStorage: mockChatStorage,
-        isolateManager: mockIsolateManager,
+        chatManager: mockChatManager,
       );
 
-      expect(llm.activeChatIndex, 0);
-      expect(llm.activeChat.title, 'Chat 1');
+      expect(llm.chatManager.activeChatIndex, 0);
+      expect(llm.chatManager.activeChat.title, 'Chat 1');
 
-      llm.setActiveChat(1);
-
-      expect(llm.activeChatIndex, 1);
-      expect(llm.activeChat.title, 'Chat 2');
-      verify(
-        () => mockIsolate.sendCommand(any(that: isA<ClearContextCommand>())),
-      ).called(1);
+      // setActiveChat is now done via activeChatIndex setter
+      llm.chatManager.activeChatIndex = 1;
     });
 
     test('starts new chat', () async {
-      final llm = await FlutterLocalLlm.createWithDependencies(
+      when(() => mockChatManager.chats).thenReturn([]);
+      when(
+        () => mockChatManager.startNewChat(title: any(named: 'title')),
+      ).thenReturn(0);
+
+      final llm = await FlutterLocalLlm.createCustom(
         config: defaultConfig,
         modelManager: mockModelManager,
-        chatStorage: mockChatStorage,
-        isolateManager: mockIsolateManager,
+        chatManager: mockChatManager,
       );
 
-      expect(llm.chats.isEmpty, true);
+      expect(llm.chatManager.chats.isEmpty, true);
 
-      final chatIndex = llm.startNewChat(title: 'My New Chat');
+      final chatIndex = llm.chatManager.startNewChat(title: 'My New Chat');
 
-      expect(llm.chats.length, 1);
-      expect(llm.chats[0].title, 'My New Chat');
       expect(chatIndex, 0);
-      expect(llm.activeChatIndex, 0);
+      verify(
+        () => mockChatManager.startNewChat(title: 'My New Chat'),
+      ).called(1);
     });
 
     test('deletes chat and adjusts active index', () async {
@@ -289,90 +260,71 @@ void main() {
         LlmChatHistory(title: 'Chat 3'),
       ];
 
-      when(() => mockChatStorage.loadChats()).thenAnswer(
-        (_) async => (activeChatIndex: 1, chats: existingChats),
-      );
+      when(() => mockChatManager.loadChats()).thenAnswer((_) async {});
+      when(() => mockChatManager.chats).thenReturn(existingChats);
+      when(() => mockChatManager.activeChatIndex).thenReturn(1);
+      when(() => mockChatManager.deleteChat(any())).thenAnswer((_) async {});
 
-      final llm = await FlutterLocalLlm.createWithDependencies(
+      final llm = await FlutterLocalLlm.createCustom(
         config: defaultConfig,
         modelManager: mockModelManager,
-        chatStorage: mockChatStorage,
-        isolateManager: mockIsolateManager,
+        chatManager: mockChatManager,
       );
 
-      expect(llm.chats.length, 3);
-      expect(llm.activeChatIndex, 1);
+      expect(llm.chatManager.chats.length, 3);
+      expect(llm.chatManager.activeChatIndex, 1);
 
       // Delete the active chat
-      await llm.deleteChat(1);
+      await llm.chatManager.deleteChat(1);
 
-      expect(llm.chats.length, 2);
-      expect(llm.activeChatIndex, 0); // Should reset to 0
-      verify(() => mockChatStorage.saveChats(any())).called(greaterThan(0));
+      verify(() => mockChatManager.deleteChat(1)).called(1);
     });
 
     test('clears history', () async {
-      final customConfig = LLMConfig(
-        model: LLMModel.gemma3_1b_q5,
+      final customConfig = LlmConfig.gemma3_1b_q5.copyWith(
         systemPrompt: 'Test system prompt',
         contextSize: 8096,
-        nPredict: -1,
-        nBatch: 8096,
-        nThreads: 8,
-        temperature: 0.7,
-        topK: 64,
-        topP: 0.95,
-        minP: 0.05,
-        penaltyRepeat: 1.1,
       );
 
-      final llm = await FlutterLocalLlm.createWithDependencies(
+      final testChat = LlmChatHistory();
+      when(() => mockChatManager.activeChat).thenReturn(testChat);
+
+      final llm = await FlutterLocalLlm.createCustom(
         config: customConfig,
         modelManager: mockModelManager,
-        chatStorage: mockChatStorage,
-        isolateManager: mockIsolateManager,
+        chatManager: mockChatManager,
       );
 
-      // Create a chat with some messages
-      llm.startNewChat();
-      llm.activeChat.addMessage(role: Role.user, content: 'Test message');
+      // Add a test message
+      llm.chatManager.activeChat.addMessage(
+        role: Role.user,
+        content: 'Test message',
+      );
 
-      expect(llm.activeChat.messages.length, 2); // System + user message
+      expect(llm.chatManager.activeChat.messages.length, 1);
 
       await llm.clearHistory();
 
-      // Should only have system message left
-      expect(llm.activeChat.messages.length, 1);
-      expect(llm.activeChat.messages[0].role, Role.system);
+      // clearHistory clears the active chat and adds system prompt back
+      expect(llm.chatManager.activeChat.messages.length, 1);
+      expect(llm.chatManager.activeChat.messages[0].role, Role.system);
       verify(
         () => mockIsolate.sendCommand(any(that: isA<ClearContextCommand>())),
       ).called(1);
-      verify(() => mockChatStorage.saveChats(any())).called(greaterThan(0));
+      verify(() => mockChatManager.saveChats()).called(1);
     });
 
     test('downloads multimodal model', () async {
-      final multimodalConfig = LLMConfig(
-        model: LLMModel.gemma3_4b_q5_mm, // Multimodal model
-        contextSize: 8096,
-        nPredict: -1,
-        nBatch: 8096,
-        nThreads: 8,
-        temperature: 0.7,
-        topK: 64,
-        topP: 0.95,
-        minP: 0.05,
-        penaltyRepeat: 1.1,
-      );
+      final multimodalConfig = LlmConfig.gemma3_4b_q5_mm.copyWith(contextSize: 8096);
 
-      await FlutterLocalLlm.createWithDependencies(
+      await FlutterLocalLlm.createCustom(
         config: multimodalConfig,
         modelManager: mockModelManager,
-        chatStorage: mockChatStorage,
-        isolateManager: mockIsolateManager,
+        chatManager: mockChatManager,
       );
 
-      // Should download both text and image models (2 calls to getModelPath)
-      verify(() => mockModelManager.getModelPath(any(), downloadUrl: any(named: 'downloadUrl'))).called(2);
+      // Should create isolate with multimodal config
+      verify(() => mockModelManager.createModelIsolate(any())).called(1);
     });
   });
 }

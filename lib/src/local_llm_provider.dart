@@ -6,7 +6,7 @@ import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 import 'flutter_local_llm_base.dart';
 
 class LocalLlmProvider extends LlmProvider with ChangeNotifier {
-  final FlutterLocalLlm _llm;
+  final FlutterLocalLlm llm;
   final List<ChatMessage> _chatHistory = [];
 
   /// Creates a LocalLlmProvider wrapping a FlutterLocalLlm instance
@@ -15,21 +15,23 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
   ///
   /// Example:
   /// ```dart
-  /// final llm = await FlutterLocalLlm.init(
-  ///   model: LLMModel.gemma3nE2B,
-  ///   systemPrompt: 'You are helpful.',
+  ///
+  /// final provider = LocalLlmProvider(
+  ///   await FlutterLocalLlm.init(
+  ///     model: LLMModel.gemma3nE2B,
+  ///     systemPrompt: 'You are helpful.',
+  ///   )
   /// );
-  /// final provider = LocalLlmProvider(llm);
   /// provider.dispose();
   /// ```
-  LocalLlmProvider(FlutterLocalLlm llm) : _llm = llm {
+  LocalLlmProvider(this.llm) {
     // Load existing chat history from active chat
     _loadHistoryFromActiveChat();
   }
 
   /// Load the active chat's history into the provider
   void _loadHistoryFromActiveChat() {
-    final activeChat = _llm.activeChat;
+    final activeChat = llm.chatManager.activeChat;
 
     // Convert llama messages to ChatMessages
     for (final message in activeChat.fullHistory) {
@@ -100,7 +102,7 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     Iterable<Attachment> attachments = const [],
   }) async* {
     final attachmentFiles = await _extractAttachmentFiles(attachments);
-    yield* _llm.sendMessage(
+    yield* llm.sendMessage(
       prompt,
       addToHistory: false,
       images: attachmentFiles,
@@ -126,7 +128,7 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     try {
       // Send message and stream tokens with attachments
       final buffer = StringBuffer();
-      await for (final token in _llm.sendMessage(
+      await for (final token in llm.sendMessage(
         prompt,
         role: Role.user,
         images: attachmentFiles,
@@ -204,10 +206,10 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
   /// Sync internal ChatMessage history to FlutterLocalLlm
   Future<void> _syncHistoryToLlm() async {
     // Clear and rebuild
-    await _llm.clearHistory();
+    await llm.clearHistory();
 
     // Get the active chat (clearHistory ensures one exists)
-    final currentChat = _llm.activeChat;
+    final currentChat = llm.chatManager.activeChat;
 
     // Add all chat messages
     for (final chatMsg in _chatHistory) {
@@ -230,7 +232,7 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
 
   @override
   void dispose() {
-    _llm.dispose();
+    llm.dispose();
     super.dispose();
   }
 }

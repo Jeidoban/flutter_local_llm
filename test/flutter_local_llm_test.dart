@@ -3,18 +3,16 @@ import 'package:flutter_local_llm/flutter_local_llm.dart';
 
 void main() {
   test('FlutterLocalLlm exports are available', () {
-    // Verify that the public types are exported correctly
-    expect(LLMModel.values, isNotEmpty);
+    expect(LlmModel.values, isNotEmpty);
     expect(Role.values, isNotEmpty);
     expect(ChatFormat.values, isNotEmpty);
   });
 
-  test('LLMModel has correct properties', () {
-    final model = LLMModel.gemma3n_E2B_q4;
-    expect(model.name, isNotEmpty);
-    expect(model.url, isNotEmpty);
-    expect(model.fileName, isNotEmpty);
-    expect(model.chatFormat, ChatFormat.gemma);
+  test('LlmModel enum has all models', () {
+    expect(LlmModel.values, contains(LlmModel.gemma3n_E2B_q4));
+    expect(LlmModel.values, contains(LlmModel.gemma3_4b_q5_mm));
+    expect(LlmModel.values, contains(LlmModel.gemma3_4b_q3_mm));
+    expect(LlmModel.values, contains(LlmModel.gemma3_1b_q5));
   });
 
   test('Role enum is available', () {
@@ -23,9 +21,8 @@ void main() {
     expect(Role.system, isNotNull);
   });
 
-  test('LLMConfig has sensible defaults', () {
-    final config = LLMConfig();
-    expect(config.model, LLMModel.gemma3_4b_q5_mm);
+  test('LlmConfig presets have sensible defaults', () {
+    final config = LlmConfig.gemma3_4b_q5_mm;
     expect(config.contextSize, 16384);
     expect(config.temperature, 0.7);
     expect(config.topK, 64);

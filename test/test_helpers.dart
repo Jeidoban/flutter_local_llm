@@ -7,30 +7,14 @@ import 'package:mocktail/mocktail.dart';
 // Mock implementations using mocktail
 class MockModelManager extends Mock implements ModelManager {}
 
-class MockChatStorage extends Mock implements ChatStorage {}
+class MockChatManager extends Mock implements ChatManager {}
 
-class MockIsolateManager extends Mock implements IsolateManager {}
-
-class MockLLMIsolate extends Mock implements LLMIsolate {}
+class MockLLMIsolate extends Mock implements LlmIsolate {}
 
 /// Register fallback values for mocktail
 void registerMocktailFallbacks() {
-  registerFallbackValue((activeChatIndex: null, chats: <LlmChatHistory>[]));  // ChatStorageRecord fallback
-  registerFallbackValue(LLMModel.gemma3_1b_q5);
-  registerFallbackValue(
-    LLMConfig(
-      model: LLMModel.gemma3_1b_q5,
-      contextSize: 8096,
-      nPredict: -1,
-      nBatch: 8096,
-      nThreads: 8,
-      temperature: 0.7,
-      topK: 64,
-      topP: 0.95,
-      minP: 0.05,
-      penaltyRepeat: 1.1,
-    ),
-  );
+  registerFallbackValue(LlmModel.gemma3_1b_q5);
+  registerFallbackValue(LlmConfig.gemma3_1b_q5);
   registerFallbackValue(GenerateFromPromptCommand(prompt: '', requestId: 0));
   registerFallbackValue(ClearContextCommand());
   registerFallbackValue(GetRemainingContextCommand(requestId: 0));
