@@ -129,44 +129,20 @@ void main() {
       ).called(1);
     });
 
-    test('auto-creates chat on first message', () async {
-      when(() => mockIsolate.sendCommand(any())).thenAnswer((invocation) {
-        final command = invocation.positionalArguments[0];
-        if (command is GetRemainingContextCommand) {
-          Future.microtask(
-            () => responseController.add(
-              RemainingContextResponse(
-                remaining: 4096,
-                requestId: command.requestId,
-              ),
-            ),
-          );
-        } else if (command is GenerateFromPromptCommand) {
-          final generateRequestId = command.requestId;
-          Future.microtask(() {
-            responseController.add(TokenResponse(token: 'Response', requestId: generateRequestId));
-            responseController.add(CompletionResponse(requestId: generateRequestId));
-          });
-        }
-      });
+    test('creates initial chat in createCustom when chats are empty', () async {
+      when(() => mockChatManager.chats).thenReturn([]);
 
-      final llm = await FlutterLocalLlm.createCustom(
+      await FlutterLocalLlm.createCustom(
         config: defaultConfig,
         modelManager: mockModelManager,
         chatManager: mockChatManager,
       );
 
-      when(() => mockChatManager.chats).thenReturn([]);
-      when(() => mockChatManager.activeChat).thenReturn(LlmChatHistory());
-      when(() => mockChatManager.startNewChat()).thenReturn(0);
-
-      expect(llm.chatManager.chats.isEmpty, true);
-
-      await for (final _ in llm.sendMessage('First message')) {
-        // Consume stream
-      }
-
-      verify(() => mockChatManager.saveChats()).called(greaterThan(0));
+      verify(
+        () => mockChatManager.startNewChat(
+          systemPrompt: defaultConfig.systemPrompt,
+        ),
+      ).called(1);
     });
 
     test('loads existing chats on init', () async {
@@ -227,8 +203,9 @@ void main() {
       expect(llm.chatManager.activeChatIndex, 0);
       expect(llm.chatManager.activeChat.title, 'Chat 1');
 
-      // setActiveChat is now done via activeChatIndex setter
       llm.chatManager.activeChatIndex = 1;
+
+      verify(() => mockChatManager.activeChatIndex = 1).called(1);
     });
 
     test('starts new chat', () async {

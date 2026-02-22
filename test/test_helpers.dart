@@ -15,6 +15,7 @@ class MockLLMIsolate extends Mock implements LlmIsolate {}
 void registerMocktailFallbacks() {
   registerFallbackValue(LlmModel.gemma3_1b_q5);
   registerFallbackValue(LlmConfig.gemma3_1b_q5);
+  registerFallbackValue(Role.user);
   registerFallbackValue(GenerateFromPromptCommand(prompt: '', requestId: 0));
   registerFallbackValue(ClearContextCommand());
   registerFallbackValue(GetRemainingContextCommand(requestId: 0));

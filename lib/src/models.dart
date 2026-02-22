@@ -2,7 +2,6 @@
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
 /// Supported preset models
-// ignore: constant_identifier_names
 enum LlmModel { gemma3n_E2B_q4, gemma3_4b_q5_mm, gemma3_4b_q3_mm, gemma3_1b_q5 }
 
 /// Self-contained LLM configuration — model identity, download info, and inference settings.
@@ -53,7 +52,6 @@ class LlmConfig {
       : null;
 
   // Preset models
-  // ignore: non_constant_identifier_names
   static const gemma3_1b_q5 = LlmConfig(
     name: 'gemma-3-1b-it-Q5_K_M',
     url:
