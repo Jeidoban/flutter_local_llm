@@ -29,7 +29,7 @@ class LlmChatHistory extends ChatHistory {
         .where((msg) => msg.role == Role.system)
         .toList();
 
-    // Collect recent message pairs from fullHistory
+    // Collect recent message pairs from fullHistory (excluding system messages)
     List<Message> recentMessages = [];
     int pairsFound = 0;
     int recentStartIndex = fullHistory.length;
@@ -39,6 +39,10 @@ class LlmChatHistory extends ChatHistory {
       i >= 0 && pairsFound < keepRecentPairs;
       i--
     ) {
+      // Skip system messages when collecting recent pairs
+      if (fullHistory[i].role == Role.system) {
+        continue;
+      }
       recentMessages.insert(0, fullHistory[i]);
       recentStartIndex = i;
       if (fullHistory[i].role == Role.user) pairsFound++;
@@ -126,9 +130,10 @@ class LlmChatHistory extends ChatHistory {
         .where((msg) => msg.role == Role.system)
         .toList();
 
-    // Recent messages start at contextStartIndex
+    // Recent messages start at contextStartIndex (excluding system messages to avoid duplicates)
     final recentMessages = history.fullHistory
         .skip(history._contextStartIndex)
+        .where((msg) => msg.role != Role.system)
         .toList();
 
     // Stitch together: system messages + recent messages

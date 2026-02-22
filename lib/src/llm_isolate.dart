@@ -12,7 +12,7 @@ sealed class IsolateCommand {}
 
 class InitializeCommand extends IsolateCommand {
   final String modelPath;
-  final LLMConfig config;
+  final LlmConfig config;
   final String? imageModelPath;
 
   InitializeCommand({
@@ -87,7 +87,7 @@ class RemainingContextResponse extends IsolateResponse {
 class LlamaManager {
   final SendPort _mainSendPort;
   late Llama _llama;
-  late LLMConfig _config;
+  late LlmConfig _config;
 
   LlamaManager(this._mainSendPort);
 
@@ -243,13 +243,13 @@ void _isolateEntryPoint(SendPort mainSendPort) {
 // Isolate Manager
 // ============================================================================
 
-class LLMIsolate {
+class LlmIsolate {
   final Isolate _isolate;
   final SendPort _sendPort;
   final ReceivePort _receivePort;
   final StreamController<IsolateResponse> _responseController;
 
-  LLMIsolate._({
+  LlmIsolate._({
     required Isolate isolate,
     required SendPort sendPort,
     required ReceivePort receivePort,
@@ -267,9 +267,9 @@ class LLMIsolate {
   }
 
   /// Spawn a new isolate and initialize it with the model
-  static Future<LLMIsolate> spawn(
+  static Future<LlmIsolate> spawn(
     String modelPath,
-    LLMConfig config, {
+    LlmConfig config, {
     String? imageModelPath,
   }) async {
     // Create receive port for main isolate
@@ -288,7 +288,7 @@ class LLMIsolate {
     final sendPort = await broadcastStream.first as SendPort;
 
     // Create isolate manager with broadcast stream
-    final llmIsolate = LLMIsolate._(
+    final llmIsolate = LlmIsolate._(
       isolate: isolate,
       sendPort: sendPort,
       receivePort: receivePort,

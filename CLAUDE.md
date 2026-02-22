@@ -12,10 +12,13 @@ flutter_local_llm is a Flutter plugin that enables running large language models
 
 **FlutterLocalLlm** (`lib/src/flutter_local_llm_base.dart`)
 - Main entry point for using local LLMs
-- Handles model downloading and caching to `flutter_local_llm_models/` directory
-- Manages chat history and context trimming
+- Handles model downloading and caching to `flutter_local_llm/models/` directory
+- Manages multiple chat sessions with automatic persistence to `flutter_local_llm/data/chats.json`
 - Provides streaming and complete response methods
-- Key methods: `init()`, `sendMessage()`, `sendMessageWithHistory()`, `clearHistory()`
+- Chat management: `startNewChat()`, `setActiveChat()`, `deleteChat()`, `deleteAllChats()`, `saveChats()`
+- Message methods: `init()`, `sendMessage()`, `sendMessageWithHistory()`, `clearHistory()`
+- Auto-creates chat on first message if none exists
+- Clears LLM context when switching between chats to prevent cross-contamination
 
 **LLMIsolate** (`lib/src/llm_isolate.dart`)
 - Runs llama.cpp in a separate Dart isolate to prevent UI blocking
@@ -31,9 +34,12 @@ flutter_local_llm is a Flutter plugin that enables running large language models
 - Synchronizes flutter_ai_toolkit's ChatMessage history with internal LlmChatHistory
 
 **LlmChatHistory** (`lib/src/llm_chat_history.dart`)
-- Extends `ChatHistory` from llama_cpp_dart
-- Implements automatic context window management
+- Extends `ChatHistory` from llama_cpp_dart with metadata fields: `title`, `createdAt`, `updatedAt`
+- Maintains both `fullHistory` (complete conversation) and `messages` (active context window)
+- Implements automatic context window management with image token estimation (300 tokens per image)
 - Trims older messages when context space runs low, preserving system messages and recent pairs
+- Custom `toJson()`/`fromJson()` methods for persistence that serialize `fullHistory` and restore active context
+- Tracks `_contextStartIndex` to know which portion of fullHistory is in active context
 
 ### Native Integration
 
@@ -78,18 +84,42 @@ flutter pub get
 
 ### Message Flow
 1. User sends message via `sendMessage()` or `sendMessageWithHistory()`
-2. FlutterLocalLlm checks remaining context space
-3. If context low, automatically trims history (keeps system messages + recent pairs)
-4. Formats messages according to chat format (Gemma, ChatML, Alpaca)
-5. Sends `GenerateFromPromptCommand` to isolate with prompt and optional attachment paths
-6. Isolate streams back `TokenResponse` until completion
-7. Response appended to chat history if `addToHistory: true`
+2. FlutterLocalLlm auto-creates a new chat if none exists
+3. Checks remaining context space from isolate
+4. If context low or empty, rebuilds/trims history (keeps system messages + recent pairs)
+5. Formats messages according to chat format (Gemma, ChatML, Alpaca)
+6. Sends `GenerateFromPromptCommand` to isolate with prompt and optional attachment paths
+7. Isolate streams back `TokenResponse` until completion
+8. If `addToHistory: true`:
+   - Auto-titles chat from first user message (if still "New Chat")
+   - Adds messages and response to active chat's history
+   - Updates `updatedAt` timestamp
+   - Saves all chats to `chats.json`
 
 ### Context Management
 - Context size configurable via `contextSize` parameter (default: 8096)
 - Automatic trimming when `shouldTrimBeforePromptNoLlama()` returns true
+  - Triggers at 80% capacity (4/5 of context) to leave room for long responses
+  - Includes estimation for both text (~4 chars per token) and images (300 tokens each)
 - Preserves system messages and configurable number of recent message pairs
-- Rough token estimation: ~4 characters per token
+- `keepRecentPairs` calculated automatically based on context size (contextSize / 2048, clamped 1-10)
+- Context cleared when switching between chats to prevent history bleeding
+
+### Multi-Chat Management
+- Supports multiple independent chat sessions stored in a list
+- Active chat accessed via `activeChat` getter (auto-creates if none exists)
+- Each chat has metadata: `title`, `createdAt`, `updatedAt` timestamps
+- Auto-titling from first user message (first 40 characters, or full message if shorter)
+- Persistence to `flutter_local_llm/data/chats.json` with pretty-printed JSON
+- Saves automatically after every message exchange with `updatedAt` timestamp update
+- Chat operations:
+  - `startNewChat({String? title})`: Create new chat with optional title (default: "New Chat")
+  - `setActiveChat(int index)`: Switch to different chat by index, clears LLM context
+  - `deleteChat(int index)`: Remove chat, adjusts active index if needed
+  - `deleteAllChats()`: Clear all chats and delete storage file
+  - `saveChats()`: Manually save all chats (updates all `updatedAt` timestamps)
+- Access chat list via `chats` getter, active chat index via `activeChatIndex`
+- List-based storage: chat index serves as identifier (no separate ID field)
 
 ### Multimodal Support
 - Models with `imageUrl` support multimodal input (e.g., gemma3_4b_q5_mm)
@@ -121,8 +151,8 @@ Custom models supported via `customModelUrl` and `customImageModelUrl` parameter
 
 ### Basic Usage
 ```dart
-final llm = await FlutterLocalLlm.init(
-  model: LLMModel.gemma3_4b_q5_mm,
+final llm = await FlutterLocalLlm.create(
+  model: LLMModel.gemma3_1b_q5,  // Default model
   systemPrompt: 'You are a helpful assistant.',
 );
 
@@ -133,9 +163,42 @@ await for (final token in llm.sendMessage('Hello!')) {
 llm.dispose();
 ```
 
+### Multi-Chat Management
+```dart
+// Initialize with automatic chat creation
+final llm = await FlutterLocalLlm.create();
+
+// First message auto-creates a chat and sets its title
+await for (final token in llm.sendMessage('What is Flutter?')) {
+  print(token);
+}
+
+// Create additional chats
+final chatIndex1 = llm.startNewChat(title: 'Flutter Questions');
+final chatIndex2 = llm.startNewChat(title: 'Dart Questions');
+
+// Switch between chats
+llm.setActiveChat(chatIndex1);
+
+// Access all chats
+for (var i = 0; i < llm.chats.length; i++) {
+  print('${llm.chats[i].title} - ${llm.chats[i].messages.length} messages');
+}
+
+// Delete a chat
+await llm.deleteChat(chatIndex2);
+
+// Clear all chats
+await llm.deleteAllChats();
+
+// Manually save after modifying chat properties
+llm.chats[0].title = 'Updated Title';
+await llm.saveChats();
+```
+
 ### With flutter_ai_toolkit
 ```dart
-final llm = await FlutterLocalLlm.init(model: LLMModel.gemma3_4b_q5_mm);
+final llm = await FlutterLocalLlm.create(model: LLMModel.gemma3_4b_q5_mm);
 final provider = LocalLlmProvider(llm: llm);
 
 LlmChatView(provider: provider); // Use pre-built chat UI
@@ -151,6 +214,86 @@ await for (final token in llm.sendMessage(
 }
 ```
 
-## Branch Context
-Currently on branch: `add-multiple-chats`
-Main branch: `main`
+## File Storage Locations
+
+All data is stored in the application's documents directory:
+
+- **Models**: `<app_docs>/flutter_local_llm/models/*.gguf`
+  - Text model files (e.g., `gemma-3-1b-it-Q5_K_M.gguf`)
+  - Image projection models (e.g., `gemma-3-4b-it-Q5_K_M-mmproj-F16.gguf`)
+
+- **Chat Data**: `<app_docs>/flutter_local_llm/data/chats.json`
+  - All chat histories with metadata
+  - Pretty-printed JSON for debugging
+  - Contains: `activeChatIndex` and array of chat objects
+  - Each chat includes: `title`, `createdAt`, `updatedAt`, `messages` (fullHistory), `contextStartIndex`
+
+**Note**: The plugin automatically migrates from the old `flutter_local_llm_models/` directory structure to the new `flutter_local_llm/models/` and `flutter_local_llm/data/` structure.
+
+## Testing
+
+The library is fully testable using dependency injection. All external dependencies (model downloading, file storage, isolate creation) can be mocked for testing.
+
+### Testing with Mocktail
+
+```dart
+import 'package:flutter_local_llm/flutter_local_llm.dart';
+import 'package:mocktail/mocktail.dart';
+
+// Create mocks
+class MockModelManager extends Mock implements ModelManager {}
+class MockChatStorage extends Mock implements ChatStorage {}
+class MockIsolateManager extends Mock implements IsolateManager {}
+
+// In your test
+void main() {
+  test('example test', () async {
+    final mockModelManager = MockModelManager();
+    final mockChatStorage = MockChatStorage();
+    final mockIsolateManager = MockIsolateManager();
+
+    // Set up mocks
+    when(() => mockModelManager.getModelPath(any(), any(), any()))
+        .thenAnswer((_) async => '/fake/model.gguf');
+    when(() => mockIsolateManager.createIsolate(any(), any(), imageModelPath: any(named: 'imageModelPath')))
+        .thenAnswer((_) async => mockIsolateHandle);
+    when(() => mockChatStorage.loadChats())
+        .thenAnswer((_) async => null);
+
+    // Create LLM with mocked dependencies
+    final llm = await FlutterLocalLlm.createWithDependencies(
+      modelManager: mockModelManager,
+      chatStorage: mockChatStorage,
+      isolateManager: mockIsolateManager,
+    );
+
+    // Test your logic...
+  });
+}
+```
+
+### Custom Implementations
+
+You can provide custom implementations for enterprise use cases:
+
+```dart
+// Custom model manager that downloads from cloud storage
+class CloudModelManager implements ModelManager {
+  @override
+  Future<String> getModelPath(String url, String fileName, Function(double)? onProgress) async {
+    // Download from your cloud storage
+  }
+
+  @override
+  Future<Directory> getModelsDirectory() async {
+    // Return custom directory
+  }
+}
+
+// Use custom implementation
+final llm = await FlutterLocalLlm.createWithDependencies(
+  modelManager: CloudModelManager(),
+  chatStorage: ChatStorage(),
+  isolateManager: IsolateManager(),
+);
+```
