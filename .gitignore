@@ -31,3 +31,7 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 /build/
 /coverage/
+
+# Built native frameworks (download via scripts/download_frameworks.sh)
+ios/Frameworks/
+macos/Frameworks/
