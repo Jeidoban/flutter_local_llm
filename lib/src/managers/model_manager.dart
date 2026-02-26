@@ -3,8 +3,8 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
-import 'llm_isolate.dart';
-import 'models.dart';
+import '../isolate/llm_isolate.dart';
+import '../models/llm_config.dart';
 
 /// Manages model downloading and file access
 class ModelManager {

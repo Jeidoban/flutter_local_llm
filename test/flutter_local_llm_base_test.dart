@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter_local_llm/flutter_local_llm.dart';
-import 'package:flutter_local_llm/src/llm_isolate.dart';
+import 'package:flutter_local_llm/src/isolate/llm_isolate.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'test_helpers.dart';
@@ -96,10 +96,18 @@ void main() {
         } else if (command is GenerateFromPromptCommand) {
           final generateRequestId = command.requestId;
           Future.microtask(() {
-            responseController.add(TokenResponse(token: 'Hello', requestId: generateRequestId));
-            responseController.add(TokenResponse(token: ' ', requestId: generateRequestId));
-            responseController.add(TokenResponse(token: 'world', requestId: generateRequestId));
-            responseController.add(CompletionResponse(requestId: generateRequestId));
+            responseController.add(
+              TokenResponse(token: 'Hello', requestId: generateRequestId),
+            );
+            responseController.add(
+              TokenResponse(token: ' ', requestId: generateRequestId),
+            );
+            responseController.add(
+              TokenResponse(token: 'world', requestId: generateRequestId),
+            );
+            responseController.add(
+              CompletionResponse(requestId: generateRequestId),
+            );
           });
         }
       });
@@ -292,7 +300,9 @@ void main() {
     });
 
     test('downloads multimodal model', () async {
-      final multimodalConfig = LlmConfig.gemma3_4b_q5_mm.copyWith(contextSize: 8096);
+      final multimodalConfig = LlmConfig.gemma3_4b_q5_mm.copyWith(
+        contextSize: 8096,
+      );
 
       await FlutterLocalLlm.createCustom(
         config: multimodalConfig,

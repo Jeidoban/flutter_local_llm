@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:flutter_local_llm/src/llm_chat_history.dart';
+import 'package:flutter_local_llm/src/models/llm_chat_history.dart';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
-import 'models.dart';
-import 'llm_isolate.dart';
-import 'model_manager.dart';
-import 'chat_manager.dart';
+import 'models/llm_config.dart';
+import 'isolate/llm_isolate.dart';
+import 'managers/model_manager.dart';
+import 'managers/chat_manager.dart';
 
 /// Main class for running local LLMs on device with automatic model downloading
 /// and context management.

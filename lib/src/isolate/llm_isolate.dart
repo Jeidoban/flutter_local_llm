@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
-import 'models.dart';
+import '../models/llm_config.dart';
 
 // ============================================================================
 // Commands sent to isolate

@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'package:flutter_local_llm/flutter_local_llm.dart';
-import 'package:flutter_local_llm/src/llm_isolate.dart';
+import 'package:flutter_local_llm/src/isolate/llm_isolate.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 

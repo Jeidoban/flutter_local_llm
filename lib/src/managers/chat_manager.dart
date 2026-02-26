@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
-import 'llm_chat_history.dart';
+import '../models/llm_chat_history.dart';
 
 /// Manages chat state and persistence
 class ChatManager {

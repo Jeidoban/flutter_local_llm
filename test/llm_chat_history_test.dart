@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_local_llm/src/llm_chat_history.dart';
+import 'package:flutter_local_llm/src/models/llm_chat_history.dart';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 import 'test_helpers.dart';
 
@@ -15,7 +15,10 @@ void main() {
 
       original.addMessage(role: Role.system, content: 'System prompt');
       original.addMessage(
-          role: Role.user, content: 'Hello', images: ['/path/to/image.jpg']);
+        role: Role.user,
+        content: 'Hello',
+        images: ['/path/to/image.jpg'],
+      );
       original.addMessage(role: Role.assistant, content: 'Hi there!');
 
       // Serialize and deserialize
@@ -48,33 +51,35 @@ void main() {
       expect(restored.createdAt, chat.createdAt);
     });
 
-    test('maintains separate fullHistory and active messages after trimming',
-        () {
-      final chat = LlmChatHistory();
+    test(
+      'maintains separate fullHistory and active messages after trimming',
+      () {
+        final chat = LlmChatHistory();
 
-      // Add multiple message pairs
-      chat.addMessage(role: Role.system, content: 'System');
-      for (int i = 0; i < 5; i++) {
-        chat.addMessage(role: Role.user, content: 'User $i');
-        chat.addMessage(role: Role.assistant, content: 'Assistant $i');
-      }
+        // Add multiple message pairs
+        chat.addMessage(role: Role.system, content: 'System');
+        for (int i = 0; i < 5; i++) {
+          chat.addMessage(role: Role.user, content: 'User $i');
+          chat.addMessage(role: Role.assistant, content: 'Assistant $i');
+        }
 
-      // Trim to keep only 2 recent pairs
-      chat.autoTrimForSpaceNoLlama(keepRecentPairs: 2);
+        // Trim to keep only 2 recent pairs
+        chat.autoTrimForSpaceNoLlama(keepRecentPairs: 2);
 
-      // fullHistory should have all 11 messages
-      expect(chat.fullHistory.length, 11);
-      // messages should have system + 4 recent (2 pairs)
-      expect(chat.messages.length, 5);
+        // fullHistory should have all 11 messages
+        expect(chat.fullHistory.length, 11);
+        // messages should have system + 4 recent (2 pairs)
+        expect(chat.messages.length, 5);
 
-      // Serialize and restore
-      final json = chat.toJson();
-      final restored = LlmChatHistory.fromJson(json);
+        // Serialize and restore
+        final json = chat.toJson();
+        final restored = LlmChatHistory.fromJson(json);
 
-      // Both should be preserved
-      expect(restored.fullHistory.length, 11);
-      expect(restored.messages.length, 5);
-    });
+        // Both should be preserved
+        expect(restored.fullHistory.length, 11);
+        expect(restored.messages.length, 5);
+      },
+    );
 
     test('restores contextStartIndex after deserialization', () {
       final chat = LlmChatHistory();
@@ -88,8 +93,10 @@ void main() {
       chat.autoTrimForSpaceNoLlama(keepRecentPairs: 2);
 
       final json = chat.toJson();
-      expect(json['contextStartIndex'],
-          greaterThan(0)); // Should point to recent messages
+      expect(
+        json['contextStartIndex'],
+        greaterThan(0),
+      ); // Should point to recent messages
 
       final restored = LlmChatHistory.fromJson(json);
       // Verify active messages match (system + recent pairs)
@@ -178,42 +185,44 @@ void main() {
   });
 
   group('LlmChatHistory autoTrimForSpaceNoLlama()', () {
-    test('preserves all system messages and specified number of recent pairs',
-        () {
-      final chat = LlmChatHistory();
+    test(
+      'preserves all system messages and specified number of recent pairs',
+      () {
+        final chat = LlmChatHistory();
 
-      // Add 2 system messages
-      chat.addMessage(role: Role.system, content: 'System 1');
-      chat.addMessage(role: Role.system, content: 'System 2');
+        // Add 2 system messages
+        chat.addMessage(role: Role.system, content: 'System 1');
+        chat.addMessage(role: Role.system, content: 'System 2');
 
-      // Add 10 user/assistant pairs
-      for (int i = 0; i < 10; i++) {
-        chat.addMessage(role: Role.user, content: 'User $i');
-        chat.addMessage(role: Role.assistant, content: 'Assistant $i');
-      }
+        // Add 10 user/assistant pairs
+        for (int i = 0; i < 10; i++) {
+          chat.addMessage(role: Role.user, content: 'User $i');
+          chat.addMessage(role: Role.assistant, content: 'Assistant $i');
+        }
 
-      // fullHistory has 22 messages total
-      expect(chat.fullHistory.length, 22);
+        // fullHistory has 22 messages total
+        expect(chat.fullHistory.length, 22);
 
-      // Trim to keep 2 recent pairs
-      chat.autoTrimForSpaceNoLlama(keepRecentPairs: 2);
+        // Trim to keep 2 recent pairs
+        chat.autoTrimForSpaceNoLlama(keepRecentPairs: 2);
 
-      // messages should have: 2 system + 4 recent = 6
-      expect(chat.messages.length, 6);
+        // messages should have: 2 system + 4 recent = 6
+        expect(chat.messages.length, 6);
 
-      // Verify system messages are first
-      expect(chat.messages[0].content, 'System 1');
-      expect(chat.messages[1].content, 'System 2');
+        // Verify system messages are first
+        expect(chat.messages[0].content, 'System 1');
+        expect(chat.messages[1].content, 'System 2');
 
-      // Verify recent pairs are last
-      expect(chat.messages[2].content, 'User 8');
-      expect(chat.messages[3].content, 'Assistant 8');
-      expect(chat.messages[4].content, 'User 9');
-      expect(chat.messages[5].content, 'Assistant 9');
+        // Verify recent pairs are last
+        expect(chat.messages[2].content, 'User 8');
+        expect(chat.messages[3].content, 'Assistant 8');
+        expect(chat.messages[4].content, 'User 9');
+        expect(chat.messages[5].content, 'Assistant 9');
 
-      // fullHistory unchanged
-      expect(chat.fullHistory.length, 22);
-    });
+        // fullHistory unchanged
+        expect(chat.fullHistory.length, 22);
+      },
+    );
 
     test('does not crash when keepRecentPairs exceeds message count', () {
       final chat = LlmChatHistory();

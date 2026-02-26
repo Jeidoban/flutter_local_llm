@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_local_llm/src/models.dart';
+import 'package:flutter_local_llm/src/models/llm_config.dart';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
 void main() {

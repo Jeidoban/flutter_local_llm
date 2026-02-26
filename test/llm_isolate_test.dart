@@ -1,5 +1,5 @@
 import 'dart:isolate';
-import 'package:flutter_local_llm/src/llm_isolate.dart';
+import 'package:flutter_local_llm/src/isolate/llm_isolate.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -86,35 +86,44 @@ void main() {
       receivePort.close();
     });
 
-    test('GenerateFromPromptCommand sends ErrorResponse with matching requestId', () async {
-      final responseFuture = receivePort.first;
-      await manager.handleCommand(
-        GenerateFromPromptCommand(prompt: 'test', requestId: 42),
-      );
-      final response = await responseFuture;
+    test(
+      'GenerateFromPromptCommand sends ErrorResponse with matching requestId',
+      () async {
+        final responseFuture = receivePort.first;
+        await manager.handleCommand(
+          GenerateFromPromptCommand(prompt: 'test', requestId: 42),
+        );
+        final response = await responseFuture;
 
-      expect(response, isA<ErrorResponse>());
-      expect((response as ErrorResponse).requestId, 42);
-    });
+        expect(response, isA<ErrorResponse>());
+        expect((response as ErrorResponse).requestId, 42);
+      },
+    );
 
-    test('GetRemainingContextCommand sends ErrorResponse with null requestId', () async {
-      // requestId is only forwarded for GenerateFromPromptCommand in the catch block
-      final responseFuture = receivePort.first;
-      await manager.handleCommand(GetRemainingContextCommand(requestId: 7));
-      final response = await responseFuture;
+    test(
+      'GetRemainingContextCommand sends ErrorResponse with null requestId',
+      () async {
+        // requestId is only forwarded for GenerateFromPromptCommand in the catch block
+        final responseFuture = receivePort.first;
+        await manager.handleCommand(GetRemainingContextCommand(requestId: 7));
+        final response = await responseFuture;
 
-      expect(response, isA<ErrorResponse>());
-      expect((response as ErrorResponse).requestId, isNull);
-    });
+        expect(response, isA<ErrorResponse>());
+        expect((response as ErrorResponse).requestId, isNull);
+      },
+    );
 
-    test('ClearContextCommand sends ErrorResponse with null requestId', () async {
-      final responseFuture = receivePort.first;
-      await manager.handleCommand(ClearContextCommand());
-      final response = await responseFuture;
+    test(
+      'ClearContextCommand sends ErrorResponse with null requestId',
+      () async {
+        final responseFuture = receivePort.first;
+        await manager.handleCommand(ClearContextCommand());
+        final response = await responseFuture;
 
-      expect(response, isA<ErrorResponse>());
-      expect((response as ErrorResponse).requestId, isNull);
-    });
+        expect(response, isA<ErrorResponse>());
+        expect((response as ErrorResponse).requestId, isNull);
+      },
+    );
 
     test('ErrorResponse error message is non-empty', () async {
       final responseFuture = receivePort.first;
