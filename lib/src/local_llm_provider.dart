@@ -5,41 +5,36 @@ import 'package:flutter_ai_toolkit/flutter_ai_toolkit.dart';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 import 'flutter_local_llm_base.dart';
 
+/// flutter_ai_toolkit [LlmProvider] backed by a local [FlutterLocalLlm] instance.
+///
+/// Translates between the toolkit's [ChatMessage] format and the internal
+/// message format. To use, create a [FlutterLocalLlm] first, then wrap it:
+///
+/// ```dart
+/// final provider = LocalLlmProvider(
+///   await FlutterLocalLlm.create(model: LlmModel.gemma3_1b_q5),
+/// );
+/// provider.dispose();
+/// ```
 class LocalLlmProvider extends LlmProvider with ChangeNotifier {
   final FlutterLocalLlm llm;
   final List<ChatMessage> _chatHistory = [];
 
-  /// Creates a LocalLlmProvider wrapping a FlutterLocalLlm instance
-  /// The FlutterLocalLlm instance must be initialized before passing it here.
-  /// Automatically loads the current active chat's history.
-  ///
-  /// Example:
-  /// ```dart
-  ///
-  /// final provider = LocalLlmProvider(
-  ///   await FlutterLocalLlm.init(
-  ///     model: LLMModel.gemma3nE2B,
-  ///     systemPrompt: 'You are helpful.',
-  ///   )
-  /// );
-  /// provider.dispose();
-  /// ```
   LocalLlmProvider(this.llm) {
-    // Load existing chat history from active chat
     _loadHistoryFromActiveChat();
   }
 
-  /// Load the active chat's history into the provider
+  /// Populates [_chatHistory] from the active chat's full history.
+  ///
+  /// Skips system messages. For user messages with image attachments, reads
+  /// the files from disk and creates [ImageFileAttachment] objects.
   void _loadHistoryFromActiveChat() {
     final activeChat = llm.chatManager.activeChat;
 
-    // Convert llama messages to ChatMessages
     for (final message in activeChat.fullHistory) {
-      // Skip system messages
       if (message.role == Role.system) continue;
 
       if (message.role == Role.user) {
-        // Load attachments from image paths
         final attachments = <Attachment>[];
         if (message.images.isNotEmpty) {
           for (final imagePath in message.images) {
@@ -47,13 +42,11 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
             if (file.existsSync()) {
               final bytes = file.readAsBytesSync();
               final name = file.uri.pathSegments.last;
-              // Determine MIME type from file extension
-              final mimeType = _getMimeType(name);
               attachments.add(
                 ImageFileAttachment(
                   name: name,
                   bytes: bytes,
-                  mimeType: mimeType,
+                  mimeType: _getMimeType(name),
                 ),
               );
             }
@@ -68,15 +61,16 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     }
   }
 
-  /// Reload history from the currently active chat
-  /// Useful after switching chats in the underlying FlutterLocalLlm
+  /// Clears [_chatHistory] and reloads from the currently active chat.
+  ///
+  /// Call this after switching chats in the underlying [FlutterLocalLlm].
   void reloadHistory() {
     _chatHistory.clear();
     _loadHistoryFromActiveChat();
     notifyListeners();
   }
 
-  /// Determine MIME type from file extension
+  /// Returns the MIME type for an image [filename] based on its extension.
   String _getMimeType(String filename) {
     final ext = filename.toLowerCase().split('.').last;
     switch (ext) {
@@ -92,7 +86,7 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
       case 'bmp':
         return 'image/bmp';
       default:
-        return 'image/jpeg'; // Default to JPEG
+        return 'image/jpeg';
     }
   }
 
@@ -114,34 +108,26 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     String prompt, {
     Iterable<Attachment> attachments = const [],
   }) async* {
-    // Extract attachment files from attachments
     final attachmentFiles = await _extractAttachmentFiles(attachments);
 
-    // Create user message and add to history
     final userMessage = ChatMessage.user(prompt, attachments.toList());
     _chatHistory.add(userMessage);
 
-    // Create empty LLM message
     final llmMessage = ChatMessage.llm();
     _chatHistory.add(llmMessage);
 
     try {
-      // Send message and stream tokens with attachments
-      final buffer = StringBuffer();
       await for (final token in llm.sendMessage(
         prompt,
         role: Role.user,
         images: attachmentFiles,
       )) {
-        buffer.write(token);
         llmMessage.append(token);
         yield token;
       }
 
-      // Notify listeners after completion
       notifyListeners();
     } catch (e) {
-      // Remove incomplete messages from history on error
       if (_chatHistory.isNotEmpty && _chatHistory.last == llmMessage) {
         _chatHistory.removeLast();
       }
@@ -160,24 +146,24 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
 
   @override
   set history(Iterable<ChatMessage> messages) {
-    // Clear and update internal history
     _chatHistory.clear();
     _chatHistory.addAll(messages);
 
-    // Sync to underlying LLM and notify listeners
     _syncHistoryToLlm().then((_) {
       notifyListeners();
     });
   }
 
-  /// Convert a flutter_ai_toolkit ChatMessage to llama_cpp_dart Message
+  /// Converts a toolkit [ChatMessage] to a llama_cpp_dart [Message].
   Message _chatToMessage(ChatMessage msg) {
     final role = msg.origin.isUser ? Role.user : Role.assistant;
     return Message(role: role, content: msg.text ?? '');
   }
 
-  /// Extract attachment files from attachments for multimodal input
-  /// Writes attachment bytes to temporary files and returns the file list
+  /// Writes attachment bytes to temporary files and returns the resulting [File] list.
+  ///
+  /// Only [ImageFileAttachment] is supported. Throws [UnsupportedError] for
+  /// other attachment types.
   Future<List<File>?> _extractAttachmentFiles(
     Iterable<Attachment> attachments,
   ) async {
@@ -185,7 +171,6 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
 
     for (final attachment in attachments) {
       if (attachment is ImageFileAttachment) {
-        // Create temp file from bytes
         final tempDir = Directory.systemTemp;
         final timestamp = DateTime.now().millisecondsSinceEpoch;
         final tempFile = File(
@@ -203,19 +188,18 @@ class LocalLlmProvider extends LlmProvider with ChangeNotifier {
     return attachmentFiles.isEmpty ? null : attachmentFiles;
   }
 
-  /// Sync internal ChatMessage history to FlutterLocalLlm
+  /// Rebuilds the [FlutterLocalLlm] chat history from the current [_chatHistory].
+  ///
+  /// Clears the LLM context and re-adds all messages, writing image
+  /// attachments to temp files for multimodal messages.
   Future<void> _syncHistoryToLlm() async {
-    // Clear and rebuild
     await llm.clearHistory();
 
-    // Get the active chat (clearHistory ensures one exists)
     final currentChat = llm.chatManager.activeChat;
 
-    // Add all chat messages
     for (final chatMsg in _chatHistory) {
       final message = _chatToMessage(chatMsg);
 
-      // Extract attachments if present
       List<String>? imagePaths;
       if (chatMsg.attachments.isNotEmpty) {
         final files = await _extractAttachmentFiles(chatMsg.attachments);

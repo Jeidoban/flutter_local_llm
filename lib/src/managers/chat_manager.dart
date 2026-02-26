@@ -5,13 +5,21 @@ import 'package:path_provider/path_provider.dart';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 import '../models/llm_chat_history.dart';
 
-/// Manages chat state and persistence
+/// Manages chat state and persistence.
+///
+/// Owns the list of [LlmChatHistory] objects, tracks which chat is active,
+/// and serializes everything to a single JSON file on disk.
+///
+/// Pass [storagePath] to override the default file location
+/// (`<app_documents>/flutter_local_llm/data/chats.json`).
+/// Set [onSessionChanged] to be notified when the active chat switches —
+/// typically used to clear the LLM context to prevent history from bleeding
+/// between sessions.
 class ChatManager {
   String? storagePath;
   void Function()? onSessionChanged;
   int keepRecentPairs;
 
-  // Chat state
   List<LlmChatHistory> _chats = [];
   int? _activeChatIndex;
 
@@ -21,12 +29,15 @@ class ChatManager {
     this.keepRecentPairs = 2,
   });
 
-  /// Get all chats
+  /// All loaded chat histories.
   List<LlmChatHistory> get chats => _chats;
 
-  /// Get the index of the currently active chat
+  /// The index into [chats] of the currently active chat, or null if no chats exist.
   int? get activeChatIndex => _activeChatIndex;
 
+  /// Switches the active chat to [index] and fires [onSessionChanged].
+  ///
+  /// Throws [ArgumentError] if [index] is out of bounds.
   set activeChatIndex(int index) {
     if (index < 0 || index >= _chats.length) {
       throw ArgumentError('Chat index out of bounds: $index');
@@ -35,14 +46,16 @@ class ChatManager {
     onSessionChanged?.call();
   }
 
-  /// Get the currently active chat (auto-creates if none exists)
+  /// The currently active [LlmChatHistory].
+  ///
+  /// Auto-creates a new chat with default settings if none exists.
   LlmChatHistory get activeChat {
     if (_chats.isEmpty) startNewChat();
     _activeChatIndex ??= 0;
     return _chats[_activeChatIndex!];
   }
 
-  /// Load chats from storage
+  /// Loads chats from the storage file, replacing any in-memory state.
   Future<void> loadChats() async {
     final file = await _getStorageFile();
 
@@ -69,12 +82,10 @@ class ChatManager {
     }
   }
 
-  /// Start a new chat session
+  /// Creates a new chat and makes it active, returning its index.
   ///
-  /// Creates a new chat with an optional [title] (defaults to "New Chat") and
-  /// [systemPrompt] (defaults to "You are a helpful assistant.").
-  /// The new chat becomes the active chat.
-  /// Returns the index of the new chat.
+  /// [title] defaults to `"New Chat"`. [systemPrompt] is added as the first
+  /// message if non-empty.
   int startNewChat({
     String title = 'New Chat',
     String systemPrompt = 'You are a helpful assistant.',
@@ -95,10 +106,11 @@ class ChatManager {
     return _activeChatIndex!;
   }
 
-  /// Delete a chat by index
+  /// Deletes the chat at [index] and saves the updated list.
   ///
-  /// If the deleted chat was active, switches to the first chat (or none if empty).
-  /// Saves changes immediately.
+  /// If the deleted chat was active, switches to index 0. Adjusts
+  /// [activeChatIndex] to keep it pointing at the same logical chat when
+  /// a chat before it is removed. Throws [ArgumentError] if out of bounds.
   Future<void> deleteChat(int index) async {
     if (index < 0 || index >= _chats.length) {
       throw ArgumentError('Chat index out of bounds: $index');
@@ -109,7 +121,6 @@ class ChatManager {
     if (_chats.isEmpty) {
       _activeChatIndex = null;
     } else {
-      // Adjust active index if needed
       if (_activeChatIndex == index) {
         _activeChatIndex = 0;
         onSessionChanged?.call();
@@ -121,9 +132,7 @@ class ChatManager {
     await saveChats();
   }
 
-  /// Delete all chats
-  ///
-  /// Clears all chat histories and deletes the storage file.
+  /// Clears all chats from memory and deletes the storage file.
   Future<void> deleteAllChats() async {
     _chats.clear();
     _activeChatIndex = null;
@@ -135,11 +144,8 @@ class ChatManager {
     }
   }
 
-  /// Save all chats to storage
-  ///
-  /// Updates all chat timestamps before saving.
+  /// Persists all chats to the storage file as pretty-printed JSON.
   Future<void> saveChats() async {
-    // Update updatedAt timestamp on all chats
     for (final chat in _chats) {
       chat.updatedAt = DateTime.now();
     }
@@ -154,12 +160,15 @@ class ChatManager {
     await file.writeAsString(jsonString);
   }
 
+  /// Returns the [File] used for persistence, creating parent directories as needed.
+  ///
+  /// Uses [storagePath] if set, otherwise defaults to
+  /// `<app_documents>/flutter_local_llm/data/chats.json`.
   Future<File> _getStorageFile() async {
     if (storagePath != null) {
       return File(storagePath!);
     }
 
-    // Default: app documents directory
     final documentsDir = await getApplicationDocumentsDirectory();
     final dataDir = Directory(
       path.join(documentsDir.path, 'flutter_local_llm', 'data'),

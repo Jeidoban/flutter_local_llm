@@ -1,14 +1,26 @@
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
+/// A chat session with metadata and context window management.
+///
+/// Extends [ChatHistory] from llama_cpp_dart with a [title], timestamps, and
+/// persistence support. Maintains two views of the conversation:
+///
+/// - [fullHistory] — the complete archive, every message ever sent.
+/// - [messages] — the active context window, the subset that fits within the
+///   model's token limit and is actually sent to the LLM.
+///
+/// When the context fills up, [autoTrimForSpaceNoLlama] rebuilds [messages]
+/// from [fullHistory], keeping system messages and the most recent
+/// [keepRecentPairs] user/assistant exchanges. No conversation data is lost.
 class LlmChatHistory extends ChatHistory {
   String title;
   DateTime createdAt;
   DateTime updatedAt;
 
-  /// Estimated tokens per image for context calculations
+  /// Estimated tokens consumed per image attachment, used for context budget calculations.
   static const int tokensPerImage = 300;
 
-  /// Index of the first message in the active context (from fullHistory)
+  /// Index into [fullHistory] where the active context window begins.
   int _contextStartIndex = 0;
 
   LlmChatHistory({
@@ -19,17 +31,15 @@ class LlmChatHistory extends ChatHistory {
         createdAt = createdAt ?? DateTime.now(),
         updatedAt = updatedAt ?? DateTime.now();
 
-  /// Automatically trims messages to fit within remaining space.
-  /// Doesn't require Llama instance.
-  /// Includes image token estimation when calculating space requirements.
-  /// Rebuilds the active context from fullHistory, preserving full history.
-  bool autoTrimForSpaceNoLlama({int keepRecentPairs = 2}) {
-    // Extract system messages from fullHistory
+  /// Rebuilds [messages] to keep only system messages and the [keepRecentPairs]
+  /// most recent user/assistant pairs from [fullHistory].
+  ///
+  /// Called when the context is nearly full. Does not discard [fullHistory].
+  void autoTrimForSpaceNoLlama({int keepRecentPairs = 2}) {
     List<Message> systemMessages = fullHistory
         .where((msg) => msg.role == Role.system)
         .toList();
 
-    // Collect recent message pairs from fullHistory (excluding system messages)
     List<Message> recentMessages = [];
     int pairsFound = 0;
     int recentStartIndex = fullHistory.length;
@@ -39,7 +49,6 @@ class LlmChatHistory extends ChatHistory {
       i >= 0 && pairsFound < keepRecentPairs;
       i--
     ) {
-      // Skip system messages when collecting recent pairs
       if (fullHistory[i].role == Role.system) {
         continue;
       }
@@ -48,49 +57,42 @@ class LlmChatHistory extends ChatHistory {
       if (fullHistory[i].role == Role.user) pairsFound++;
     }
 
-    // Track where recent messages start in fullHistory
-    // System messages are always included from the beginning separately
     _contextStartIndex = recentStartIndex;
 
-    // Rebuild messages (active context) from fullHistory
     messages.clear();
     messages.addAll(systemMessages);
     messages.addAll(recentMessages);
-
-    return true;
   }
 
-  /// Check if trimming is needed before adding a new prompt.
-  /// Doesn't require Llama instance.
-  /// Includes estimation for both text and attached images.
-  /// Also triggers trimming if we're at 4/5 context capacity to leave room for response.
+  /// Returns true if the context needs to be rebuilt before sending [newPrompt].
+  ///
+  /// Triggers when remaining space drops below 20% of [contextSize], or when
+  /// the estimated token cost of [newPrompt] plus [imageCount] attached images
+  /// exceeds [remainingSpace]. Text is estimated at ~4 characters per token.
   bool shouldTrimBeforePromptNoLlama(
     String newPrompt,
     int remainingSpace,
     int contextSize, {
     int imageCount = 0,
   }) {
-    // Trim if we're at 4/5 (80%) capacity to leave room for long responses
-    // remainingSpace < contextSize / 5 means less than 20% is remaining
     if (remainingSpace < contextSize / 5) {
       return true;
     }
 
-    // Estimate text tokens (~4 chars per token) + buffer
     int estimatedTextTokens = (newPrompt.length / 4).ceil() + 50;
-
-    // Add estimated tokens for images
     int estimatedImageTokens = imageCount * tokensPerImage;
-
     int totalEstimatedTokens = estimatedTextTokens + estimatedImageTokens;
 
     return remainingSpace < totalEstimatedTokens;
   }
 
+  /// Serializes the full conversation history (not just the active context window).
+  ///
+  /// Overrides [ChatHistory.toJson], which only serializes [messages].
+  /// Persists [fullHistory] and [_contextStartIndex] so the active context
+  /// window can be reconstructed exactly on load.
   @override
   Map<String, dynamic> toJson() {
-    // Don't call super.toJson() - it only serializes messages (active context)
-    // We want to serialize fullHistory (complete conversation)
     return {
       'title': title,
       'createdAt': createdAt.toIso8601String(),
@@ -100,8 +102,12 @@ class LlmChatHistory extends ChatHistory {
     };
   }
 
+  /// Restores a [LlmChatHistory] from JSON produced by [toJson].
+  ///
+  /// Reconstructs both [fullHistory] and the active context window ([messages])
+  /// by stitching system messages together with recent messages starting at
+  /// the saved [_contextStartIndex].
   factory LlmChatHistory.fromJson(Map<String, dynamic> json) {
-    // Don't call ChatHistory.fromJson() - we need custom logic
     final history = LlmChatHistory(
       title: json['title'] as String?,
       createdAt: json['createdAt'] != null
@@ -112,7 +118,6 @@ class LlmChatHistory extends ChatHistory {
           : null,
     );
 
-    // Load full history
     final messagesList = json['messages'] as List<dynamic>?;
     if (messagesList != null) {
       for (final msgJson in messagesList) {
@@ -121,22 +126,17 @@ class LlmChatHistory extends ChatHistory {
       }
     }
 
-    // Restore context range
     history._contextStartIndex = json['contextStartIndex'] as int? ?? 0;
 
-    // Rebuild active context (messages) from fullHistory
-    // System messages are always included from the beginning
     final systemMessages = history.fullHistory
         .where((msg) => msg.role == Role.system)
         .toList();
 
-    // Recent messages start at contextStartIndex (excluding system messages to avoid duplicates)
     final recentMessages = history.fullHistory
         .skip(history._contextStartIndex)
         .where((msg) => msg.role != Role.system)
         .toList();
 
-    // Stitch together: system messages + recent messages
     history.messages.clear();
     history.messages.addAll(systemMessages);
     history.messages.addAll(recentMessages);

@@ -6,13 +6,24 @@ import 'package:path_provider/path_provider.dart';
 import '../isolate/llm_isolate.dart';
 import '../models/llm_config.dart';
 
-/// Manages model downloading and file access
+/// Manages model file downloading and isolate creation.
+///
+/// Handles resolving model paths, downloading `.gguf` files from the network
+/// on first use, and spawning the [LlmIsolate] that runs inference.
+///
+/// Pass [modelsPath] to override the default storage location
+/// (`<app_documents>/flutter_local_llm/models/`).
+/// Pass [onDownloadProgress] to receive progress updates during downloads.
 class ModelManager {
   String? modelsPath;
   void Function(double progress)? onDownloadProgress;
 
   ModelManager({this.modelsPath, this.onDownloadProgress});
 
+  /// Returns the directory where model files are stored, creating it if needed.
+  ///
+  /// Uses [modelsPath] if set, otherwise defaults to
+  /// `<app_documents>/flutter_local_llm/models/`.
   Future<Directory> _getModelsDirectory() async {
     if (modelsPath != null) {
       final dir = Directory(modelsPath!);
@@ -31,7 +42,10 @@ class ModelManager {
     return defaultModelsDir;
   }
 
-  /// Get the full path to a model file, downloading if necessary
+  /// Returns the full filesystem path for [modelName], downloading it first if absent.
+  ///
+  /// If the file doesn't exist and [downloadUrl] is provided, downloads the
+  /// model and reports progress via [onDownloadProgress].
   Future<String> getModelPath(String modelName, {String? downloadUrl}) async {
     final modelsDir = await _getModelsDirectory();
     final modelFilePath = path.join(modelsDir.path, modelName);
@@ -45,7 +59,11 @@ class ModelManager {
     return modelFilePath;
   }
 
-  /// Download a model file and yield progress updates (0.0 to 1.0)
+  /// Downloads a model file from [url] and yields progress values from 0.0 to 1.0.
+  ///
+  /// Streams the response body directly to disk to avoid holding the full file
+  /// in memory. If the server doesn't report a content length, yields 1.0
+  /// on completion.
   Stream<double> downloadModel(String modelName, String url) async* {
     final modelsDir = await _getModelsDirectory();
     final modelFilePath = path.join(modelsDir.path, modelName);
@@ -73,17 +91,17 @@ class ModelManager {
     if (totalBytes == 0) yield 1.0;
   }
 
-  /// Create and initialize an isolate with the model
+  /// Downloads all model files required by [config] and spawns an [LlmIsolate].
   ///
-  /// Downloads models if needed and creates the isolate
+  /// Downloads the main text model and, for multimodal configs, the vision
+  /// projector as well. Both are downloaded to [modelsPath] (or the default
+  /// location) before the isolate is created.
   Future<LlmIsolate> createModelIsolate(LlmConfig config) async {
-    // Download text model if needed
     final modelPath = await getModelPath(
       config.fileName,
       downloadUrl: config.url,
     );
 
-    // Download image model if needed
     String? imageModelPath;
     if (config.imageUrl != null && config.imageFileName != null) {
       imageModelPath = await getModelPath(

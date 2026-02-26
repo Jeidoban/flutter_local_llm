@@ -7,11 +7,10 @@ import 'isolate/llm_isolate.dart';
 import 'managers/model_manager.dart';
 import 'managers/chat_manager.dart';
 
-/// Main class for running local LLMs on device with automatic model downloading
-/// and context management.
+/// Runs a local LLM on device with automatic model downloading and context management.
 ///
 /// ```dart
-/// final llm = await FlutterLocalLlm.init();
+/// final llm = await FlutterLocalLlm.create();
 /// await for (final token in llm.sendMessage('Hello!')) {
 ///   print(token);
 /// }
@@ -24,7 +23,6 @@ class FlutterLocalLlm {
   final ModelManager modelManager;
   int _nextRequestId = 0;
 
-  // Private constructor - accepts all dependencies
   FlutterLocalLlm._({
     required LlmIsolate isolate,
     required this.config,
@@ -32,7 +30,9 @@ class FlutterLocalLlm {
     required this.modelManager,
   }) : _isolate = isolate;
 
-  /// Simple factory with defaults - zero config option
+  /// Creates a [FlutterLocalLlm] with a preset model and sensible defaults.
+  ///
+  /// For custom models or custom dependencies, use [createCustom].
   static Future<FlutterLocalLlm> create({
     LlmModel model = LlmModel.gemma3_1b_q5,
     String? systemPrompt,
@@ -50,10 +50,8 @@ class FlutterLocalLlm {
     String? modelsPath,
     String? chatStoragePath,
   }) {
-    // Default batch size to context size if not specified
     final batchSize = nBatch ?? contextSize;
 
-    // Build system prompt with context size guidance if not provided
     final effectiveSystemPrompt =
         systemPrompt ??
         'You are a helpful assistant. Please keep your responses concise, '
@@ -61,7 +59,6 @@ class FlutterLocalLlm {
             'Limit answers to an absolute maximum of ${(contextSize / 2).round()} '
             'tokens to fit within the conversation context.';
 
-    // Map enum to base config, then apply overrides
     final baseConfig = switch (model) {
       LlmModel.gemma3_1b_q5 => LlmConfig.gemma3_1b_q5,
       LlmModel.gemma3n_E2B_q4 => LlmConfig.gemma3n_E2B_q4,
@@ -82,7 +79,7 @@ class FlutterLocalLlm {
       penaltyRepeat: penaltyRepeat,
     );
 
-    // For multimodal models, weight progress: text model 0-50%, image model 50-100%
+    // For multimodal models, weight progress: text model 0–50%, image model 50–100%
     final hasImageModel =
         config.imageUrl != null && config.imageFileName != null;
     int downloadCount = 0;
@@ -100,7 +97,6 @@ class FlutterLocalLlm {
             },
     );
 
-    // Calculate keepRecentPairs based on context size
     final keepRecentPairs = (contextSize / 2048).round().clamp(1, 10);
 
     return createCustom(
@@ -113,10 +109,10 @@ class FlutterLocalLlm {
     );
   }
 
-  /// Factory with optional dependency injection — for testing or custom implementations.
+  /// Creates a [FlutterLocalLlm] with explicit dependencies.
   ///
-  /// Pass a custom [modelManager] or [chatManager] to override the defaults.
-  /// If omitted, defaults are created from [config].
+  /// Provide a custom [ModelManager] or [ChatManager] to override default
+  /// behavior — useful for testing or advanced configuration.
   static Future<FlutterLocalLlm> createCustom({
     required LlmConfig config,
     ModelManager? modelManager,
@@ -127,14 +123,11 @@ class FlutterLocalLlm {
     final effectiveChatManager =
         chatManager ?? ChatManager(keepRecentPairs: keepRecentPairs);
 
-    // Create isolate (downloads models if needed)
     final isolate = await effectiveModelManager.createModelIsolate(config);
 
-    // Set up context clearing callback
     effectiveChatManager.onSessionChanged = () =>
         isolate.sendCommand(ClearContextCommand());
 
-    // Create instance
     final instance = FlutterLocalLlm._(
       isolate: isolate,
       config: config,
@@ -142,10 +135,8 @@ class FlutterLocalLlm {
       modelManager: effectiveModelManager,
     );
 
-    // Load chats from storage
     await effectiveChatManager.loadChats();
 
-    // Ensure there's always at least one chat with the right system prompt
     if (effectiveChatManager.chats.isEmpty) {
       effectiveChatManager.startNewChat(systemPrompt: config.systemPrompt);
     }
@@ -153,14 +144,13 @@ class FlutterLocalLlm {
     return instance;
   }
 
-  /// Internal helper to generate from a prompt
+  /// Sends [prompt] to the isolate and yields tokens as they arrive.
   Stream<String> _generateFromPrompt(
     String prompt, {
     List<String>? filePaths,
   }) async* {
     final requestId = _nextRequestId++;
 
-    // Send command to isolate
     _isolate.sendCommand(
       GenerateFromPromptCommand(
         prompt: prompt,
@@ -169,7 +159,6 @@ class FlutterLocalLlm {
       ),
     );
 
-    // Listen for tokens
     await for (final response in _isolate.responseStream) {
       if (response is TokenResponse && response.requestId == requestId) {
         yield response.token;
@@ -182,12 +171,11 @@ class FlutterLocalLlm {
     }
   }
 
-  /// Get remaining context space from the isolate
+  /// Returns the number of tokens remaining in the model's context window.
   Future<int> getRemainingContextSpace() async {
     final requestId = _nextRequestId++;
     _isolate.sendCommand(GetRemainingContextCommand(requestId: requestId));
 
-    // Wait for response
     await for (final response in _isolate.responseStream) {
       if (response is RemainingContextResponse &&
           response.requestId == requestId) {
@@ -199,7 +187,9 @@ class FlutterLocalLlm {
     throw Exception('Failed to get remaining context space');
   }
 
-  /// Clear the current chat's history and LLM context
+  /// Clears the active chat's message history and resets the LLM context.
+  ///
+  /// Re-adds the system prompt if one is configured, then persists the change.
   Future<void> clearHistory() async {
     chatManager.activeChat.messages.clear();
     chatManager.activeChat.fullHistory.clear();
@@ -212,16 +202,13 @@ class FlutterLocalLlm {
     }
 
     _isolate.sendCommand(ClearContextCommand());
-
-    // Save to storage
     await chatManager.saveChats();
   }
 
-  /// Send a message and get streaming tokens
+  /// Sends a message and returns a stream of response tokens.
   ///
-  /// By default, adds the message and response to chat history.
-  /// Set [addToHistory] to false for stateless generation.
-  /// Optionally attach [images] for multimodal input.
+  /// Set [addToHistory] to false for stateless generation that does not
+  /// affect the conversation history. Pass [images] for multimodal input.
   Stream<String> sendMessage(
     String message, {
     Role role = Role.user,
@@ -238,8 +225,10 @@ class FlutterLocalLlm {
     yield* sendMessageWithHistory(tempHistory, addToHistory: addToHistory);
   }
 
-  /// Send a message and wait for complete response
-  /// Optionally attach [images] for multimodal input.
+  /// Sends a message and returns the complete response as a single string.
+  ///
+  /// Set [addToHistory] to false for stateless generation that does not
+  /// affect the conversation history. Pass [images] for multimodal input.
   Future<String> sendMessageComplete(
     String message, {
     Role role = Role.user,
@@ -258,10 +247,11 @@ class FlutterLocalLlm {
     return buffer.toString();
   }
 
-  /// Send multiple messages and get streaming tokens
+  /// Sends a pre-built [LlmChatHistory] and returns a stream of response tokens.
   ///
-  /// By default, adds messages and response to chat history.
-  /// Set [addToHistory] to false for stateless generation.
+  /// Set [addToHistory] to false for stateless generation that does not
+  /// affect the conversation history. Attach images inside the history object
+  /// for multimodal input.
   Stream<String> sendMessageWithHistory(
     LlmChatHistory messages, {
     bool addToHistory = true,
@@ -276,12 +266,10 @@ class FlutterLocalLlm {
     // Check if context is empty (just cleared or first message)
     final contextIsEmpty = remainingSpace >= config.contextSize - 100;
 
-    // Count images in new messages for token estimation
     final newMessageImageCount = messages.messages
         .expand((msg) => msg.images)
         .length;
 
-    // Determine if we need to rebuild context with history
     final needsHistoryRebuild =
         contextIsEmpty ||
         chatManager.activeChat.shouldTrimBeforePromptNoLlama(
@@ -292,7 +280,7 @@ class FlutterLocalLlm {
         );
 
     if (needsHistoryRebuild) {
-      // Create test prompt with full history to check if it fits
+      // Build a combined prompt to check if the full history fits
       final testMessages = LlmChatHistory();
       testMessages.messages.addAll(chatManager.activeChat.messages);
       testMessages.messages.addAll(messages.messages);
@@ -301,12 +289,10 @@ class FlutterLocalLlm {
         leaveLastAssistantOpen: true,
       );
 
-      // Count total images (history + new messages)
       final totalImageCount = testMessages.messages
           .expand((msg) => msg.images)
           .length;
 
-      // Trim history if full prompt doesn't fit
       if (chatManager.activeChat.shouldTrimBeforePromptNoLlama(
         fullPrompt,
         remainingSpace,
@@ -318,7 +304,7 @@ class FlutterLocalLlm {
         );
       }
 
-      // Clear context and add (possibly trimmed) history
+      // Clear context and repopulate with (possibly trimmed) history
       _isolate.sendCommand(ClearContextCommand());
       tempMessages.messages.addAll(chatManager.activeChat.messages);
     }
@@ -344,7 +330,7 @@ class FlutterLocalLlm {
     }
 
     if (addToHistory) {
-      // Find first user message for auto-titling
+      // Find the first user message to use as the auto-generated chat title
       String? firstUserMessage;
       for (final msg in messages.messages) {
         if (msg.role == Role.user) {
@@ -353,7 +339,6 @@ class FlutterLocalLlm {
         }
       }
 
-      // Auto-title from first user message if still "New Chat"
       if (chatManager.activeChat.title == 'New Chat' &&
           firstUserMessage != null) {
         chatManager.activeChat.title = firstUserMessage.length > 40
@@ -374,14 +359,16 @@ class FlutterLocalLlm {
         content: responseBuffer.toString().trim(),
       );
 
-      // Update timestamp and save
       chatManager.activeChat.updatedAt = DateTime.now();
       await chatManager.saveChats();
     }
   }
 
-  /// Send multiple messages and wait for complete response
-  /// Optionally attach [images] for multimodal input.
+  /// Sends a pre-built [LlmChatHistory] and returns the complete response as a single string.
+  ///
+  /// Set [addToHistory] to false for stateless generation that does not
+  /// affect the conversation history. Attach images inside the history object
+  /// for multimodal input.
   Future<String> sendMessageWithHistoryComplete(
     LlmChatHistory messages, {
     bool addToHistory = true,
@@ -396,7 +383,7 @@ class FlutterLocalLlm {
     return buffer.toString();
   }
 
-  /// Clean up resources
+  /// Disposes the LLM isolate and frees native resources.
   void dispose() {
     _isolate.dispose();
   }

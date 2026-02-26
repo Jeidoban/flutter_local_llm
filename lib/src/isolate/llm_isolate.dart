@@ -83,7 +83,12 @@ class RemainingContextResponse extends IsolateResponse {
 // Llama Manager
 // ============================================================================
 
-/// Manages the Llama instance and handles commands within the isolate
+/// Runs inside the spawned isolate and owns the [Llama] instance.
+///
+/// Receives [IsolateCommand] objects from the main isolate and sends
+/// [IsolateResponse] objects back over [_mainSendPort]. Errors from any
+/// command are caught and returned as [ErrorResponse] so the main isolate
+/// can surface them to callers.
 class LlamaManager {
   final SendPort _mainSendPort;
   late Llama _llama;
@@ -91,7 +96,9 @@ class LlamaManager {
 
   LlamaManager(this._mainSendPort);
 
-  /// Get stop tokens for a given chat format
+  /// Returns the stop tokens for the given [chatFormat].
+  ///
+  /// Generation stops when any of these tokens appear in the output stream.
   List<String> _getStopTokens(ChatFormat chatFormat) {
     switch (chatFormat) {
       case ChatFormat.gemma:
@@ -105,7 +112,11 @@ class LlamaManager {
     }
   }
 
-  /// Generate text from a prompt and stream tokens back to main isolate
+  /// Runs inference on [prompt] and streams [TokenResponse] objects back to the main isolate.
+  ///
+  /// For multimodal prompts, loads each path in [attachmentPaths] as a
+  /// [LlamaImage] and uses [Llama.generateWithMedia]. For text-only prompts,
+  /// uses [Llama.generateText]. Sends a [CompletionResponse] when done.
   Future<void> _generateFromPrompt(
     String prompt,
     int requestId, {
@@ -115,13 +126,11 @@ class LlamaManager {
 
     Stream<String> stream;
     if (attachmentPaths != null && attachmentPaths.isNotEmpty) {
-      // Use multimodal generation with attachments
       final attachments = attachmentPaths
           .map((path) => LlamaImage.fromFile(File(path)))
           .toList();
       stream = _llama.generateWithMedia(prompt, inputs: attachments);
     } else {
-      // Use text-only generation
       _llama.setPrompt(prompt);
       stream = _llama.generateText();
     }
@@ -143,12 +152,12 @@ class LlamaManager {
     _mainSendPort.send(CompletionResponse(requestId: requestId));
   }
 
+  /// Sets the native library path based on the current platform.
+  ///
+  /// iOS and macOS load llama.cpp from the embedded framework automatically.
+  /// Android, Linux, and Windows require an explicit path to the shared library.
   void _setupLlamaLibraryPath() {
-    // For iOS/macOS, the framework is embedded already and loaded
-    // from process.
-
     if (Platform.isAndroid) {
-      // For Android, set the path to the .so file
       Llama.libraryPath = 'libllama.so';
     } else if (Platform.isLinux) {
       Llama.libraryPath = 'libllama.so';
@@ -157,7 +166,9 @@ class LlamaManager {
     }
   }
 
-  /// Handle a command from the main isolate
+  /// Dispatches an [IsolateCommand] to the appropriate handler.
+  ///
+  /// Any uncaught exception is returned to the main isolate as an [ErrorResponse].
   Future<void> handleCommand(IsolateCommand message) async {
     try {
       switch (message) {
@@ -218,7 +229,7 @@ class LlamaManager {
     }
   }
 
-  /// Clean up resources
+  /// Frees the native [Llama] resources.
   void dispose() {
     _llama.dispose();
   }
@@ -243,6 +254,12 @@ void _isolateEntryPoint(SendPort mainSendPort) {
 // Isolate Manager
 // ============================================================================
 
+/// Manages a spawned Dart isolate running [LlamaManager].
+///
+/// Exposes a command/response interface: send typed [IsolateCommand] objects
+/// via [sendCommand] and receive typed [IsolateResponse] objects from
+/// [responseStream]. The isolate is spawned and fully initialized before
+/// [spawn] returns.
 class LlmIsolate {
   final Isolate _isolate;
   final SendPort _sendPort;
@@ -258,7 +275,6 @@ class LlmIsolate {
        _sendPort = sendPort,
        _receivePort = receivePort,
        _responseController = StreamController<IsolateResponse>.broadcast() {
-    // Listen to all isolate responses and forward to stream controller
     broadcastStream.listen((message) {
       if (message is IsolateResponse) {
         _responseController.add(message);
@@ -266,28 +282,26 @@ class LlmIsolate {
     });
   }
 
-  /// Spawn a new isolate and initialize it with the model
+  /// Spawns a new isolate, loads the model at [modelPath], and waits for it to initialize.
+  ///
+  /// Pass [imageModelPath] for multimodal models. Throws if initialization fails.
   static Future<LlmIsolate> spawn(
     String modelPath,
     LlmConfig config, {
     String? imageModelPath,
   }) async {
-    // Create receive port for main isolate
     final receivePort = ReceivePort();
 
-    // Convert to broadcast stream so we can listen multiple times
+    // We use a broadcast stream so we can listen multiple times.
     final broadcastStream = receivePort.asBroadcastStream();
 
-    // Spawn isolate
     final isolate = await Isolate.spawn(
       _isolateEntryPoint,
       receivePort.sendPort,
     );
 
-    // Get send port from spawned isolate (first message)
     final sendPort = await broadcastStream.first as SendPort;
 
-    // Create isolate manager with broadcast stream
     final llmIsolate = LlmIsolate._(
       isolate: isolate,
       sendPort: sendPort,
@@ -295,7 +309,6 @@ class LlmIsolate {
       broadcastStream: broadcastStream,
     );
 
-    // Send initialization command
     llmIsolate.sendCommand(
       InitializeCommand(
         modelPath: modelPath,
@@ -304,7 +317,6 @@ class LlmIsolate {
       ),
     );
 
-    // Wait for initialization to complete
     final response = await llmIsolate.responseStream.firstWhere(
       (response) =>
           response is InitializedResponse || response is ErrorResponse,
@@ -318,15 +330,15 @@ class LlmIsolate {
     return llmIsolate;
   }
 
-  /// Get stream of responses from isolate
+  /// Broadcast stream of all responses from the isolate.
   Stream<IsolateResponse> get responseStream => _responseController.stream;
 
-  /// Send a command to the isolate
+  /// Sends a command to the isolate.
   void sendCommand(IsolateCommand command) {
     _sendPort.send(command);
   }
 
-  /// Dispose the isolate and clean up resources
+  /// Kills the isolate and releases all associated resources.
   void dispose() {
     sendCommand(DisposeCommand());
     _isolate.kill();

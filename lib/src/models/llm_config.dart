@@ -1,7 +1,7 @@
 // ignore_for_file: non_constant_identifier_names, constant_identifier_names
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
-/// Supported preset models
+/// Preset models available via [FlutterLocalLlm.create].
 enum LlmModel { gemma3n_E2B_q4, gemma3_4b_q5_mm, gemma3_4b_q3_mm, gemma3_1b_q5 }
 
 /// Self-contained LLM configuration — model identity, download info, and inference settings.
@@ -12,10 +12,11 @@ enum LlmModel { gemma3n_E2B_q4, gemma3_4b_q5_mm, gemma3_4b_q3_mm, gemma3_1b_q5 }
 /// LlmConfig(name: 'my-model', url: 'https://...', chatFormat: ChatFormat.chatml)
 /// ```
 class LlmConfig {
-  final String name; // Base filename without .gguf
-  final String url; // Download URL for the text model
-  final String?
-  imageUrl; // Download URL for vision projector (null = text-only)
+  final String name;
+  final String url;
+
+  /// Download URL for the vision projector model. Null for text-only models.
+  final String? imageUrl;
   final ChatFormat chatFormat;
   final String systemPrompt;
   final int contextSize;
@@ -45,25 +46,30 @@ class LlmConfig {
     this.penaltyRepeat = 1.1,
   });
 
-  // Derived filenames
+  /// The `.gguf` filename derived from [name].
   String get fileName => '$name.gguf';
+
+  /// The vision projector filename, derived from [name] and the last path segment of [imageUrl].
+  /// Returns null for text-only models.
   String? get imageFileName => imageUrl != null
       ? '$name-${Uri.parse(imageUrl!).pathSegments.last}'
       : null;
 
-  // Preset models
+  /// Gemma 3 1B — smallest model, suitable for low-memory devices.
   static const gemma3_1b_q5 = LlmConfig(
     name: 'gemma-3-1b-it-Q5_K_M',
     url:
         'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q5_K_M.gguf',
   );
 
+  /// Gemma 3n E2B — efficient architecture, good balance of size and quality.
   static const gemma3n_E2B_q4 = LlmConfig(
     name: 'gemma-3n-E2B-it-Q4_K_M',
     url:
         'https://huggingface.co/unsloth/gemma-3n-E2B-it-GGUF/resolve/main/gemma-3n-E2B-it-Q4_K_M.gguf',
   );
 
+  /// Gemma 3 4B Q5 with multimodal support (text + images).
   static const gemma3_4b_q5_mm = LlmConfig(
     name: 'gemma-3-4b-it-Q5_K_M',
     url:
@@ -72,6 +78,7 @@ class LlmConfig {
         'https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/mmproj-F16.gguf',
   );
 
+  /// Gemma 3 4B Q3 with multimodal support — smaller than Q5, lower quality.
   static const gemma3_4b_q3_mm = LlmConfig(
     name: 'gemma-3-4b-it-Q3_K_M',
     url:
@@ -80,6 +87,7 @@ class LlmConfig {
         'https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/mmproj-F16.gguf',
   );
 
+  /// Returns a copy of this config with the given fields replaced.
   LlmConfig copyWith({
     String? name,
     String? url,
