@@ -48,7 +48,6 @@ void main() {
       expect(config.url, custom);
       expect(config.contextSize, 4096);
       expect(config.systemPrompt, 'Custom prompt');
-      // Unchanged fields preserved
       expect(config.name, LlmConfig.gemma3_1b_q5.name);
       expect(config.chatFormat, LlmConfig.gemma3_1b_q5.chatFormat);
     });
