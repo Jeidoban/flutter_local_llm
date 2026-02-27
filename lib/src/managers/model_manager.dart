@@ -91,6 +91,31 @@ class ModelManager {
     if (totalBytes == 0) yield 1.0;
   }
 
+  /// Returns a list of model file names currently stored in the models directory.
+  ///
+  /// Only returns files (not subdirectories). Returns an empty list if the
+  /// models directory does not yet exist.
+  Future<List<String>> listModels() async {
+    final modelsDir = await _getModelsDirectory();
+    if (!modelsDir.existsSync()) return [];
+    return modelsDir
+        .listSync()
+        .whereType<File>()
+        .map((f) => path.basename(f.path))
+        .toList();
+  }
+
+  /// Deletes the model file with [modelName] from the models directory.
+  ///
+  /// Does nothing if the file does not exist.
+  Future<void> deleteModel(String modelName) async {
+    final modelsDir = await _getModelsDirectory();
+    final modelFile = File(path.join(modelsDir.path, modelName));
+    if (modelFile.existsSync()) {
+      await modelFile.delete();
+    }
+  }
+
   /// Downloads all model files required by [config] and spawns an [LlmIsolate].
   ///
   /// Downloads the main text model and, for multimodal configs, the vision
