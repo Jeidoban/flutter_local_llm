@@ -82,4 +82,82 @@ void main() {
       expect(progressCalled, false);
     });
   });
+
+  group('ModelManager listModels()', () {
+    late TempTestDirectory tempDir;
+
+    setUp(() async {
+      tempDir = TempTestDirectory();
+      await tempDir.setup();
+    });
+
+    tearDown(() async {
+      await tempDir.teardown();
+    });
+
+    test('returns empty list when no models are present', () async {
+      final manager = ModelManager(modelsPath: tempDir.dir.path);
+
+      final models = await manager.listModels();
+
+      expect(models, isEmpty);
+    });
+
+    test('returns only .gguf files', () async {
+      final manager = ModelManager(modelsPath: tempDir.dir.path);
+      File('${tempDir.dir.path}/model-a.gguf').writeAsStringSync('a');
+      File('${tempDir.dir.path}/model-b.gguf').writeAsStringSync('b');
+      File('${tempDir.dir.path}/readme.txt').writeAsStringSync('ignore me');
+
+      final models = await manager.listModels();
+      final names = models.map((f) => f.uri.pathSegments.last).toSet();
+
+      expect(names, {'model-a.gguf', 'model-b.gguf'});
+      expect(names, isNot(contains('readme.txt')));
+    });
+  });
+
+  group('ModelManager deleteModel()', () {
+    late TempTestDirectory tempDir;
+
+    setUp(() async {
+      tempDir = TempTestDirectory();
+      await tempDir.setup();
+    });
+
+    tearDown(() async {
+      await tempDir.teardown();
+    });
+
+    test('deletes an existing model file', () async {
+      final manager = ModelManager(modelsPath: tempDir.dir.path);
+      final file = File('${tempDir.dir.path}/model.gguf');
+      file.writeAsStringSync('data');
+      expect(file.existsSync(), true);
+
+      await manager.deleteModel('model.gguf');
+
+      expect(file.existsSync(), false);
+    });
+
+    test('does nothing when the model file does not exist', () async {
+      final manager = ModelManager(modelsPath: tempDir.dir.path);
+
+      await expectLater(
+        manager.deleteModel('nonexistent.gguf'),
+        completes,
+      );
+    });
+
+    test('only deletes the specified file, leaving others intact', () async {
+      final manager = ModelManager(modelsPath: tempDir.dir.path);
+      File('${tempDir.dir.path}/keep.gguf').writeAsStringSync('keep');
+      File('${tempDir.dir.path}/delete-me.gguf').writeAsStringSync('bye');
+
+      await manager.deleteModel('delete-me.gguf');
+
+      expect(File('${tempDir.dir.path}/keep.gguf').existsSync(), true);
+      expect(File('${tempDir.dir.path}/delete-me.gguf').existsSync(), false);
+    });
+  });
 }

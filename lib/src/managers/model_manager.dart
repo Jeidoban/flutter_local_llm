@@ -91,6 +91,27 @@ class ModelManager {
     if (totalBytes == 0) yield 1.0;
   }
 
+  /// Returns all `.gguf` files present in the models directory.
+  Future<List<File>> listModels() async {
+    final modelsDir = await _getModelsDirectory();
+    return modelsDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.endsWith('.gguf'))
+        .toList();
+  }
+
+  /// Deletes the model file with [modelName] from the models directory.
+  ///
+  /// Does nothing if the file does not exist.
+  Future<void> deleteModel(String modelName) async {
+    final modelsDir = await _getModelsDirectory();
+    final file = File(path.join(modelsDir.path, modelName));
+    if (file.existsSync()) {
+      await file.delete();
+    }
+  }
+
   /// Downloads all model files required by [config] and spawns an [LlmIsolate].
   ///
   /// Downloads the main text model and, for multimodal configs, the vision
