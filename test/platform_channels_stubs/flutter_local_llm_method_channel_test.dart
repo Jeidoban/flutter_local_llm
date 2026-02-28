@@ -5,6 +5,7 @@ import 'package:flutter_local_llm/platform_channels_stubs/flutter_local_llm_meth
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  // ignore: unused_local_variable
   MethodChannelFlutterLocalLlm platform = MethodChannelFlutterLocalLlm();
   const MethodChannel channel = MethodChannel('flutter_local_llm');
 
